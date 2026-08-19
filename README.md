@@ -99,6 +99,81 @@ that needs one degrades visibly rather than failing at startup.
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_NUMBER`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | WhatsApp |
 | `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY` | Payment cards |
 
+## Connecting WhatsApp and Telegram
+
+Both webhooks are already deployed and live. Neither needs a code change, only
+credentials and a registration step on the provider's side.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `https://wis.ai/webhooks/telegram` | POST | Telegram updates |
+| `https://wis.ai/webhooks/whatsapp` | GET | Meta's subscription handshake |
+| `https://wis.ai/webhooks/whatsapp` | POST | Inbound messages |
+
+Both verify the caller before doing any work: Telegram by the secret token it
+echoes in `X-Telegram-Bot-Api-Secret-Token`, WhatsApp by an HMAC-SHA256 check
+of `X-Hub-Signature-256` against the app secret. Until the corresponding secret
+is set, that check is skipped, so set the secrets before registering.
+
+### Telegram
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and note the token
+   and the bot username.
+2. Set the secrets. `TELEGRAM_WEBHOOK_SECRET` is any random string you choose;
+   it just has to match on both sides.
+
+   ```bash
+   npx wrangler secret put TELEGRAM_BOT_TOKEN
+   npx wrangler secret put TELEGRAM_BOT_USERNAME
+   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+   ```
+
+3. Register the webhook:
+
+   ```bash
+   read -rs TELEGRAM_BOT_TOKEN && export TELEGRAM_BOT_TOKEN
+   read -rs TELEGRAM_WEBHOOK_SECRET && export TELEGRAM_WEBHOOK_SECRET
+   ./scripts/register-telegram-webhook.sh
+   ```
+
+`TELEGRAM_BOT_USERNAME` is what builds the `t.me/<bot>?start=<token>` deep link
+on the Connect button, so linking shows nothing useful until it is set.
+
+### WhatsApp
+
+Uses the Meta Cloud API.
+
+1. In the Meta developer dashboard, create an app, add the WhatsApp product,
+   and note the phone number ID, the business phone number, a permanent access
+   token, and the app secret.
+2. Set the secrets. `WHATSAPP_VERIFY_TOKEN` is a random string you choose and
+   then type into Meta's webhook form.
+
+   ```bash
+   npx wrangler secret put WHATSAPP_TOKEN
+   npx wrangler secret put WHATSAPP_PHONE_NUMBER_ID
+   npx wrangler secret put WHATSAPP_NUMBER
+   npx wrangler secret put WHATSAPP_VERIFY_TOKEN
+   npx wrangler secret put WHATSAPP_APP_SECRET
+   ```
+
+3. In the dashboard, configure the webhook with callback URL
+   `https://wis.ai/webhooks/whatsapp`, the same verify token, and subscribe to
+   the `messages` field. Meta calls the GET endpoint to confirm; it answers the
+   challenge once `WHATSAPP_VERIFY_TOKEN` matches.
+
+### Checking it worked
+
+Sign in, open `/app`, and press Connect. That issues a single-use pairing token
+(15 minutes) and renders a deep link and QR code. Opening it starts a chat
+pre-filled with `link <token>`, and the Worker binds that channel identity to
+the account. If the channel's phone number matches the one on the account,
+`mobile_verified` flips to true; if it does not, the assistant asks once
+whether to update it (SPEC 4.3).
+
+With both linked, only the active channel receives assistant-initiated
+messages, so nothing is sent twice. Replies work on either (SPEC 4.2).
+
 ## Outstanding manual steps
 
 These need account-level access that the Workers OAuth token does not carry.

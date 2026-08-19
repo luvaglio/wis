@@ -73,7 +73,7 @@ function page(title: string, body: string): string {
 <meta name="robots" content="noindex">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#fbfbf9">
-<link rel="stylesheet" href="/assets/style.css?v=2">
+<link rel="stylesheet" href="/assets/style.css?v=4">
 </head>
 <body>
   <div class="page">
@@ -85,7 +85,7 @@ function page(title: string, body: string): string {
 ${body}
     </main>
   </div>
-  <script src="/assets/app.js?v=2"></script>
+  <script src="/assets/app.js?v=4"></script>
 </body>
 </html>`;
 }
@@ -139,7 +139,7 @@ function onboardingPage(me: Me): string {
   </fieldset>
 
   <fieldset class="step">
-    <label class="q" for="proactivity">How forward should they be?</label>
+    <label class="q" for="proactivity">How proactive should <span id="assistant-label">your assistant</span> be?</label>
     <input class="slider" type="range" id="proactivity" name="proactivity" min="1" max="5" value="3" step="1">
     <div class="slider-ends"><span>Only when asked</span><span>Checks in and anticipates</span></div>
     <p class="gauge">About <span class="num" id="estimate">${esc(proactivityEstimate(3).replace("roughly ", ""))}</span></p>
@@ -211,8 +211,7 @@ ${connections.length > 1 ? `<p class="disclaimer">Both are connected. Only the a
 
 <hr class="rule">
 
-<h2 class="q">Settings</h2>
-<label class="q" for="proactivity">How forward they are.</label>
+<label class="q" for="proactivity">How proactive should ${esc(me.assistant_name ?? "Wis")} be?</label>
 <input class="slider" type="range" id="proactivity" min="1" max="5" step="1" value="${esc(me.proactivity ?? 3)}">
 <div class="slider-ends"><span>Only when asked</span><span>Checks in and anticipates</span></div>
 <p class="gauge">About <span class="num" id="estimate">${esc(proactivityEstimate(me.proactivity ?? 3).replace("roughly ", ""))}</span></p>

@@ -16,6 +16,7 @@ import { requestCode, verifyCode, logout, resolveSession } from "./routes/auth";
 import {
   saveAccount,
   completeOnboarding,
+  updatePreferences,
   checkHandle,
   proactivityGauge,
   uploadRecording,
@@ -162,6 +163,7 @@ async function handleApi(
 
   if (path === "/api/account" && method === "POST") return saveAccount(request, env);
   if (path === "/api/onboarding" && method === "POST") return completeOnboarding(request, env);
+  if (path === "/api/preferences" && method === "POST") return updatePreferences(request, env);
   if (path === "/api/recording" && method === "POST") return uploadRecording(request, env);
   if (path === "/api/cards" && method === "GET") return listCards(env, userId);
 

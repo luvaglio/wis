@@ -132,6 +132,74 @@ export async function completeOnboarding(request: Request, env: Env): Promise<Re
   });
 }
 
+/**
+ * POST /api/preferences
+ *
+ * Partial update of the personality layer, for the settings that stay
+ * revisitable after onboarding (SPEC 3, step 5: "revisitable later from the
+ * assistant's own settings").
+ *
+ * Deliberately separate from /api/onboarding. That endpoint completes the
+ * onboarding conversation and writes the whole row, so a caller that sends
+ * one field means "these are all my answers" and everything else falls back
+ * to its default. Sending a single setting to it silently reset the rest,
+ * which is how an assistant named Aria quietly became Wis again. Here, only
+ * the fields actually supplied are touched.
+ */
+export async function updatePreferences(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body) return badRequest("Nothing to update.");
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+
+  if (typeof body.assistant_name === "string" && body.assistant_name.trim()) {
+    sets.push("assistant_name = ?");
+    values.push(body.assistant_name.trim().slice(0, 40));
+  }
+
+  if (typeof body.address_as === "string") {
+    sets.push("address_as = ?");
+    values.push(body.address_as.trim().slice(0, 40) || null);
+  }
+
+  if (typeof body.personality === "string" && PRESETS.includes(body.personality as PersonalityPreset)) {
+    sets.push("personality = ?");
+    values.push(body.personality);
+  }
+
+  if (typeof body.language === "string" && body.language.trim()) {
+    sets.push("language = ?");
+    values.push(body.language.trim().slice(0, 12));
+  }
+
+  if (body.proactivity !== undefined) {
+    sets.push("proactivity = ?");
+    values.push(clamp(Number(body.proactivity), 1, 5));
+  }
+
+  if (sets.length === 0) return badRequest("Nothing to update.");
+
+  sets.push("updated_at = unixepoch()");
+  values.push(userId);
+
+  const result = await env.DB.prepare(
+    `UPDATE preferences SET ${sets.join(", ")} WHERE user_id = ?`
+  )
+    .bind(...values)
+    .run();
+
+  // A user who has not finished onboarding has no preferences row to update.
+  if (result.meta.changes === 0) {
+    return badRequest("Finish setting up your assistant first.");
+  }
+
+  return json({ ok: true });
+}
+
 /** GET /api/proactivity?level=3  Live usage gauge under the slider (SPEC 3, step 5). */
 export function proactivityGauge(request: Request): Response {
   const level = clamp(Number(new URL(request.url).searchParams.get("level") ?? 3), 1, 5);

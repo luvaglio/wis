@@ -32,6 +32,19 @@ if (slider && estimate) {
   });
 }
 
+// ---- the proactivity question names the assistant ----
+// The name is chosen a few questions earlier in the same form, so the label
+// follows it rather than saying "they".
+var assistantNameField = byId('assistant_name');
+var assistantLabel = byId('assistant-label');
+
+if (assistantNameField && assistantLabel) {
+  assistantNameField.addEventListener('input', function () {
+    var name = assistantNameField.value.trim();
+    assistantLabel.textContent = name || 'your assistant';
+  });
+}
+
 // ---- personality "something else" reveal ----
 var otherField = byId('personality_other');
 if (otherField) {
@@ -112,6 +125,83 @@ if (form) {
   });
 }
 
+// ---- hold to record (SPEC 3, step 6) ----
+// The transcript is what gets stored and embedded. The audio stays in R2 for
+// the user's own reference and deletion, and is never replayed back into the
+// assistant's reasoning, so the textarea is filled with the transcript and the
+// user can edit it before saving.
+var recordBtn = byId('record');
+var contextField = byId('context');
+
+if (recordBtn && contextField) {
+  var recorder = null;
+  var chunks = [];
+  var idleLabel = recordBtn.textContent;
+
+  function supported() {
+    return !!(navigator.mediaDevices && window.MediaRecorder);
+  }
+
+  if (!supported()) {
+    recordBtn.hidden = true;
+  } else {
+    recordBtn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function (stream) {
+          chunks = [];
+          recorder = new MediaRecorder(stream);
+          recorder.ondataavailable = function (ev) {
+            if (ev.data && ev.data.size) chunks.push(ev.data);
+          };
+          recorder.onstop = function () {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            upload(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+          };
+          recorder.start();
+          recordBtn.textContent = 'Recording, let go when done';
+        })
+        .catch(function () {
+          recordBtn.textContent = 'Microphone not available';
+          setTimeout(function () { recordBtn.textContent = idleLabel; }, 2500);
+        });
+    });
+
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (evt) {
+      recordBtn.addEventListener(evt, function () {
+        if (recorder && recorder.state === 'recording') {
+          recorder.stop();
+          recorder = null;
+          recordBtn.textContent = 'Transcribing';
+        }
+      });
+    });
+  }
+
+  function upload(blob) {
+    fetch('/api/recording', {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'audio/webm' },
+      body: blob
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        recordBtn.textContent = idleLabel;
+        if (!data.ok) return;
+        if (data.transcript) {
+          contextField.value = contextField.value
+            ? contextField.value + '\n' + data.transcript
+            : data.transcript;
+        } else {
+          contextField.placeholder = 'That did not transcribe. Type it instead.';
+        }
+      })
+      .catch(function () {
+        recordBtn.textContent = idleLabel;
+      });
+  }
+}
+
 // ---- channel linking (SPEC 4.3) ----
 document.querySelectorAll('.connect').forEach(function (button) {
   button.addEventListener('click', function () {
@@ -153,9 +243,11 @@ document.querySelectorAll('.set-active').forEach(function (button) {
 });
 
 // ---- settings: proactivity persists on release ----
+// /api/preferences updates only what it is given. Posting a single setting to
+// /api/onboarding would rewrite the whole personality layer and reset the rest.
 if (slider && !form) {
   slider.addEventListener('change', function () {
-    post('/api/onboarding', { proactivity: Number(slider.value) });
+    post('/api/preferences', { proactivity: Number(slider.value) });
   });
 }
 

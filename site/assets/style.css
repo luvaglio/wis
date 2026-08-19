@@ -307,10 +307,75 @@ textarea.field {
 }
 .choice input { margin-top: 0.55rem; accent-color: var(--ink); }
 
+/* The range input is styled explicitly rather than left to accent-color.
+   The native thumb renders as little more than a hairline in several
+   browsers, which gives no visible handle to grab. Track and thumb both use
+   existing tokens: hairline track, ink fill, white control face with a
+   hairline border and the same 10px control radius as every other control,
+   so the handle reads as a small tile rather than a new shape. */
 .slider {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: var(--ink);
-  margin: 0.5rem 0 0.4rem;
+  margin: 1rem 0 0.9rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Track */
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hair);
+}
+.slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hair);
+}
+.slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+/* Thumb. Deliberately generous: it is dragged with a thumb on a phone. */
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  margin-top: -13px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(22, 22, 15, 0.12);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms ease;
+}
+.slider::-moz-range-thumb {
+  width: 30px;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(22, 22, 15, 0.12);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms ease;
+}
+
+.slider:hover::-webkit-slider-thumb { border-color: #c9c9bf; }
+.slider:hover::-moz-range-thumb { border-color: #c9c9bf; }
+.slider:active::-webkit-slider-thumb { transform: scale(0.96); }
+.slider:active::-moz-range-thumb { transform: scale(0.96); }
+
+.slider:focus { outline: none; }
+.slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.slider:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .slider-ends {
   display: flex;
