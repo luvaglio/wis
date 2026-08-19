@@ -5,13 +5,16 @@
   "compatibility_date": "2026-08-18",
   "compatibility_flags": ["nodejs_compat"],
 
-  // A route rather than a custom domain: the apex already has a proxied DNS
-  // record, and a route intercepts in front of it without needing that record
-  // to be torn down and recreated. workers.dev stays on as a smoke-test URL
-  // that is independent of the live domain.
+  // Custom domains rather than routes. A route needs a DNS record to already
+  // exist and point somewhere; a custom domain creates and maintains its own,
+  // which is what makes the setup explicit rather than depending on a wildcard
+  // to answer for it. workers.dev stays on as a smoke-test URL independent of
+  // the live domain.
   "workers_dev": true,
+  // www is not here yet: a custom domain refuses to attach while the hostname
+  // has hand-made A or AAAA records, so those have to be removed first.
   "routes": [
-    { "pattern": "wis.ai/*", "zone_name": "wis.ai" }
+    { "pattern": "wis.ai", "custom_domain": true }
   ],
 
   "observability": { "enabled": true, "head_sampling_rate": 1 },
