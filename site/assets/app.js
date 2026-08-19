@@ -205,6 +205,35 @@ if (recordBtn && contextField) {
   }
 }
 
+// ---- is the channel actually able to reach us? ----
+// Opening the bot chat is not the same as connecting. Telegram only forwards
+// /start to this Worker once a webhook is registered, so without one the chat
+// opens, the bot looks live, and nothing ever binds. Say so rather than
+// letting people discover it by sending messages into a void.
+var channelWarning = byId('channel-warning');
+
+if (channelWarning) {
+  fetch('/api/diagnostics')
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) return;
+      var problems = [];
+      ['telegram', 'whatsapp'].forEach(function (name) {
+        var c = d[name];
+        var configured = name === 'telegram' ? c.bot_token : c.token;
+        if (!configured) return;
+        if (!c.last_webhook || c.last_webhook.outcome !== 'accepted') {
+          problems.push(c.hint);
+        }
+      });
+      if (problems.length) {
+        channelWarning.textContent = problems.join(' ');
+        channelWarning.hidden = false;
+      }
+    })
+    .catch(function () { /* diagnostics are advisory, never block the page */ });
+}
+
 // ---- channel linking (SPEC 4.3) ----
 document.querySelectorAll('.connect').forEach(function (button) {
   button.addEventListener('click', function () {

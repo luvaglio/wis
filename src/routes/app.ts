@@ -82,7 +82,7 @@ function page(title: string, body: string): string {
 <meta name="robots" content="noindex">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#fbfbf9">
-<link rel="stylesheet" href="/assets/style.css?v=5">
+<link rel="stylesheet" href="/assets/style.css?v=6">
 </head>
 <body>
   <div class="page">
@@ -94,7 +94,7 @@ function page(title: string, body: string): string {
 ${body}
     </main>
   </div>
-  <script src="/assets/app.js?v=5"></script>
+  <script src="/assets/app.js?v=6"></script>
 </body>
 </html>`;
 }
@@ -210,6 +210,8 @@ ${assistantEmail ? `<p>Their email address is <strong>${esc(assistantEmail)}</st
     }
   </div>
 </div>
+
+<p class="disclaimer" id="channel-warning" hidden></p>
 
 <div id="pairing" hidden>
   <p id="pairing-copy"></p>
