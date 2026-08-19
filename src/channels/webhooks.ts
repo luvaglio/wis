@@ -54,7 +54,14 @@ async function handleInboundMessage(
       ? `Connected. The number on this account is ${result.storedNumber}, but this ${channel} account uses a different one. Shall I update it to this one?`
       : "Connected. I am ready when you are.";
 
-    await replyOn(env, channel, channelUserId, greeting);
+    // Say plainly when a link was moved. The previous account has just lost
+    // this channel, and finding that out silently would be worse than being
+    // told.
+    const moved = result.movedFromAnotherAccount
+      ? `This ${channel} account was connected to a different Wis.ai account. I have moved it here. `
+      : "";
+
+    await replyOn(env, channel, channelUserId, moved + greeting);
     return;
   }
 

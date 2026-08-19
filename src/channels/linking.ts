@@ -46,7 +46,14 @@ export async function createPairingToken(env: Env, userId: string): Promise<Pair
 }
 
 export type LinkResult =
-  | { ok: true; userId: string; numberMismatch: boolean; storedNumber: string | null }
+  | {
+      ok: true;
+      userId: string;
+      numberMismatch: boolean;
+      storedNumber: string | null;
+      /** This channel identity was connected to a different account until now. */
+      movedFromAnotherAccount: boolean;
+    }
   | { ok: false; reason: string };
 
 /**
@@ -82,6 +89,34 @@ export async function redeemPairingToken(
 
   const isFirst = (existing?.n ?? 0) === 0;
 
+  // One shared bot serves every user, so a channel identity is the tenant key
+  // and can only point at one account. If this identity is already bound
+  // elsewhere the row must be moved, not inserted: the table has two unique
+  // constraints and an upsert can only name one of them, so a second account
+  // linking the same chat would otherwise fail on
+  // UNIQUE (channel, channel_user_id) with no conflict clause to catch it.
+  //
+  // Moving it is the right resolution rather than a refusal. Redeeming the
+  // token proves control of this account, and messaging from the chat proves
+  // control of the channel identity, so the person is entitled to decide where
+  // it points. Refusing would leave them at a dead end if they no longer have
+  // access to the older account.
+  const priorBinding = await env.DB.prepare(
+    `SELECT user_id FROM connections WHERE channel = ? AND channel_user_id = ?`
+  )
+    .bind(channel, channelUserId)
+    .first<{ user_id: string }>();
+
+  const movedFromAnotherAccount = !!priorBinding && priorBinding.user_id !== userId;
+
+  if (movedFromAnotherAccount) {
+    await env.DB.prepare(
+      `DELETE FROM connections WHERE channel = ? AND channel_user_id = ?`
+    )
+      .bind(channel, channelUserId)
+      .run();
+  }
+
   await env.DB.prepare(
     `INSERT INTO connections (id, user_id, channel, channel_user_id, channel_phone, is_active_outbound)
      VALUES (?, ?, ?, ?, ?, ?)
@@ -111,7 +146,13 @@ export async function redeemPairingToken(
     }
   }
 
-  return { ok: true, userId, numberMismatch, storedNumber: user.mobile_number };
+  return {
+    ok: true,
+    userId,
+    numberMismatch,
+    storedNumber: user.mobile_number,
+    movedFromAnotherAccount,
+  };
 }
 
 /** Switch which channel receives proactive outbound (SPEC 4.2). */
