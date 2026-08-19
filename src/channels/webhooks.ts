@@ -80,6 +80,30 @@ async function handleInboundMessage(
   await agent.handleInbound({ channel, text });
 }
 
+
+/**
+ * Record the outcome of the most recent webhook call per channel.
+ *
+ * Without this, "Telegram never called" and "Telegram called and we rejected
+ * it" look identical from outside: no reply either way. The two need opposite
+ * fixes, so the last outcome is kept where the app can read it back.
+ */
+async function recordWebhookOutcome(
+  env: Env,
+  channel: Channel,
+  outcome: "accepted" | "rejected_bad_secret" | "rejected_bad_signature"
+): Promise<void> {
+  try {
+    await env.KV.put(
+      `diag:webhook:${channel}`,
+      JSON.stringify({ at: new Date().toISOString(), outcome }),
+      { expirationTtl: 30 * 24 * 60 * 60 }
+    );
+  } catch (err) {
+    console.warn("could not record webhook outcome", err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Telegram
 // ---------------------------------------------------------------------------
@@ -94,16 +118,34 @@ type TelegramUpdate = {
 
 export async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   // Telegram authenticates webhooks with a secret header set at registration.
+  //
+  // A mismatch here is silent from the outside: Telegram keeps delivering and
+  // we keep rejecting, and the symptom is simply that nothing ever happens.
+  // Both outcomes are logged so the two cases can be told apart, because
+  // "Telegram never called" and "Telegram called and we refused" need
+  // completely different fixes.
   if (env.TELEGRAM_WEBHOOK_SECRET) {
     const provided = request.headers.get("x-telegram-bot-api-secret-token");
     if (provided !== env.TELEGRAM_WEBHOOK_SECRET) {
+      console.error(
+        "telegram webhook rejected: secret token mismatch. The value registered " +
+          "with setWebhook does not match TELEGRAM_WEBHOOK_SECRET on the Worker. " +
+          `Header ${provided ? "was present but different" : "was missing entirely"}.`
+      );
+      await recordWebhookOutcome(env, "telegram", "rejected_bad_secret");
       return new Response("forbidden", { status: 403 });
     }
   }
 
+  await recordWebhookOutcome(env, "telegram", "accepted");
+
   const update = (await request.json().catch(() => null)) as TelegramUpdate | null;
   const chatId = update?.message?.chat?.id;
   const text = update?.message?.text;
+
+  console.log(
+    `telegram update accepted: chat=${chatId ?? "none"} text=${text ? "yes" : "no"}`
+  );
 
   if (chatId && text) {
     await handleInboundMessage(
@@ -152,9 +194,13 @@ export async function whatsappWebhook(request: Request, env: Env): Promise<Respo
   if (env.WHATSAPP_APP_SECRET) {
     const signature = request.headers.get("x-hub-signature-256");
     if (!(await verifyMetaSignature(env.WHATSAPP_APP_SECRET, raw, signature))) {
+      console.error("whatsapp webhook rejected: X-Hub-Signature-256 did not verify");
+      await recordWebhookOutcome(env, "whatsapp", "rejected_bad_signature");
       return new Response("forbidden", { status: 403 });
     }
   }
+
+  await recordWebhookOutcome(env, "whatsapp", "accepted");
 
   const payload = safeJson<WhatsAppPayload>(raw);
   const messages = payload?.entry?.[0]?.changes?.[0]?.value?.messages ?? [];

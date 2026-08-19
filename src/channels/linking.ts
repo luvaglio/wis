@@ -39,8 +39,10 @@ export async function createPairingToken(env: Env, userId: string): Promise<Pair
     whatsappUrl: env.WHATSAPP_NUMBER
       ? `https://wa.me/${env.WHATSAPP_NUMBER.replace(/\D/g, "")}?text=${encodeURIComponent(startMessage)}`
       : "",
+    // A username pasted straight from BotFather often carries a leading "@",
+    // which would produce https://t.me/@bot and never resolve.
     telegramUrl: env.TELEGRAM_BOT_USERNAME
-      ? `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${token}`
+      ? `https://t.me/${env.TELEGRAM_BOT_USERNAME.replace(/^@+/, "").trim()}?start=${token}`
       : "",
   };
 }

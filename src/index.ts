@@ -22,6 +22,7 @@ import {
   addMemory,
   deleteMemory,
   checkHandle,
+  diagnostics,
   proactivityGauge,
   uploadRecording,
 } from "./routes/onboarding";
@@ -174,6 +175,7 @@ async function handleApi(
   if (path === "/api/memory" && method === "DELETE") return deleteMemory(request, env);
   if (path === "/api/recording" && method === "POST") return uploadRecording(request, env);
   if (path === "/api/cards" && method === "GET") return listCards(env, userId);
+  if (path === "/api/diagnostics" && method === "GET") return diagnostics(request, env);
 
   // --- Channel linking (SPEC 4.3).
   if (path === "/api/channels/pair" && method === "POST") {

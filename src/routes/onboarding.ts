@@ -356,6 +356,56 @@ export async function deleteMemory(request: Request, env: Env): Promise<Response
   return json({ ok: true });
 }
 
+/**
+ * GET /api/diagnostics
+ *
+ * Whether each channel is configured on our side, and what happened the last
+ * time its webhook was called. Reports configuration state and call outcomes
+ * only, never a secret value or any part of one.
+ */
+export async function diagnostics(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const [telegram, whatsapp] = await Promise.all([
+    env.KV.get<{ at: string; outcome: string }>("diag:webhook:telegram", "json"),
+    env.KV.get<{ at: string; outcome: string }>("diag:webhook:whatsapp", "json"),
+  ]);
+
+  return json({
+    ok: true,
+    telegram: {
+      bot_token: !!env.TELEGRAM_BOT_TOKEN,
+      bot_username: !!env.TELEGRAM_BOT_USERNAME,
+      webhook_secret: !!env.TELEGRAM_WEBHOOK_SECRET,
+      last_webhook: telegram ?? null,
+      hint: hintFor(!!env.TELEGRAM_BOT_TOKEN, telegram?.outcome, "telegram"),
+    },
+    whatsapp: {
+      token: !!env.WHATSAPP_TOKEN,
+      phone_number_id: !!env.WHATSAPP_PHONE_NUMBER_ID,
+      verify_token: !!env.WHATSAPP_VERIFY_TOKEN,
+      app_secret: !!env.WHATSAPP_APP_SECRET,
+      last_webhook: whatsapp ?? null,
+      hint: hintFor(!!env.WHATSAPP_TOKEN, whatsapp?.outcome, "whatsapp"),
+    },
+  });
+}
+
+function hintFor(configured: boolean, outcome: string | undefined, channel: string): string {
+  if (!configured) return `No credentials set for ${channel} yet.`;
+  if (!outcome) {
+    return `Credentials are set, but ${channel} has never called this Worker. The webhook is probably not registered, or points somewhere else.`;
+  }
+  if (outcome === "rejected_bad_secret") {
+    return "Telegram is calling, and every update is being rejected: the secret registered with setWebhook does not match TELEGRAM_WEBHOOK_SECRET. Re-register with the value the Worker holds.";
+  }
+  if (outcome === "rejected_bad_signature") {
+    return "WhatsApp is calling, and the payload signature does not verify against WHATSAPP_APP_SECRET.";
+  }
+  return "Calls are arriving and being accepted.";
+}
+
 /** GET /api/proactivity?level=3  Live usage gauge under the slider (SPEC 3, step 5). */
 export function proactivityGauge(request: Request): Response {
   const level = clamp(Number(new URL(request.url).searchParams.get("level") ?? 3), 1, 5);
