@@ -27,8 +27,13 @@ export type PageFinding = {
  * Worker's tsconfig lib would make `document` and friends appear available in
  * Worker code, where they do not exist. A string keeps that boundary honest:
  * this executes somewhere else.
+ *
+ * It must be an immediately invoked expression. Puppeteer sends a string to
+ * Runtime.evaluate as an expression rather than calling it, so a bare
+ * "() => {...}" evaluates to a function object, serialises to undefined, and
+ * every page silently reads as empty.
  */
-const EXTRACT_PAGE_TEXT = `() => {
+const EXTRACT_PAGE_TEXT = `(() => {
   for (const sel of ["script", "style", "noscript", "svg", "nav", "footer", "header"]) {
     for (const el of Array.from(document.querySelectorAll(sel))) el.remove();
   }
@@ -37,7 +42,7 @@ const EXTRACT_PAGE_TEXT = `() => {
     title: document.title || "",
     text: ((main && main.textContent) || "").replace(/\\s+/g, " ").trim()
   };
-}`;
+})()`;
 
 /** Longest extract kept per page. The untrusted wrapper truncates again. */
 const MAX_PAGE_CHARS = 6_000;
@@ -57,7 +62,7 @@ const MAX_PAGES = 2;
  * dead link cannot lose the findings from a good one.
  */
 export async function readPages(env: Env, urls: string[]): Promise<PageFinding[]> {
-  const targets = urls.filter(isSafeUrl).slice(0, MAX_PAGES);
+  const targets = [...new Set(urls.map((u) => u.trim()))].filter(isSafeUrl).slice(0, MAX_PAGES);
   if (targets.length === 0) return [];
 
   const browser = await puppeteer.launch(env.BROWSER);
@@ -73,20 +78,28 @@ export async function readPages(env: Env, urls: string[]): Promise<PageFinding[]
 
         // Strips the page furniture first, so the extract is the content
         // rather than the navigation.
-        const finding = (await page.evaluate(EXTRACT_PAGE_TEXT)) as {
-          title: string;
-          text: string;
-        };
+        const finding = (await page.evaluate(EXTRACT_PAGE_TEXT)) as
+          | { title?: unknown; text?: unknown }
+          | undefined;
 
-        if (finding.text) {
+        const title = typeof finding?.title === "string" ? finding.title : "";
+        const text = typeof finding?.text === "string" ? finding.text : "";
+
+        if (!text) {
+          console.warn(`${url} returned no readable text`);
+        }
+
+        if (text) {
           findings.push({
             url,
-            title: finding.title.slice(0, 200),
-            text: finding.text.slice(0, MAX_PAGE_CHARS),
+            title: title.slice(0, 200),
+            text: text.slice(0, MAX_PAGE_CHARS),
           });
         }
       } catch (err) {
-        console.warn(`could not read ${url}`, err);
+        console.warn(
+          `could not read ${url}: ${err instanceof Error ? err.message : String(err)}`
+        );
       } finally {
         // Close the page even when evaluate threw, or the browser holds it
         // open for the rest of the batch.
