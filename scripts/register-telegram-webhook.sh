@@ -22,7 +22,14 @@
 set -euo pipefail
 
 : "${TELEGRAM_BOT_TOKEN:?export TELEGRAM_BOT_TOKEN first}"
-: "${TELEGRAM_WEBHOOK_SECRET:?export TELEGRAM_WEBHOOK_SECRET first}"
+
+# The secret is optional, and must mirror the Worker exactly:
+#   set on both, or set on neither.
+# Registering with a secret the Worker does not hold, or without one it does,
+# means Telegram delivers and the Worker refuses every update, with silence as
+# the only symptom. Leave TELEGRAM_WEBHOOK_SECRET unset here if you have not
+# set it with `wrangler secret put`.
+TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-}"
 
 ORIGIN="${PUBLIC_ORIGIN:-https://wis.ai}"
 URL="${ORIGIN}/webhooks/telegram"
@@ -63,8 +70,10 @@ api getMe | show || {
 }
 
 echo
-echo "2. Registering ${URL}"
-api setWebhook -H 'content-type: application/json' -d "$(cat <<JSON
+if [ -n "${TELEGRAM_WEBHOOK_SECRET}" ]; then
+  echo "2. Registering ${URL} with a secret token"
+  echo "   The Worker must hold the same value in TELEGRAM_WEBHOOK_SECRET."
+  PAYLOAD=$(cat <<JSON
 {
   "url": "${URL}",
   "secret_token": "${TELEGRAM_WEBHOOK_SECRET}",
@@ -72,7 +81,22 @@ api setWebhook -H 'content-type: application/json' -d "$(cat <<JSON
   "drop_pending_updates": true
 }
 JSON
-)" | show || exit 1
+)
+else
+  echo "2. Registering ${URL} without a secret token"
+  echo "   The Worker must NOT have TELEGRAM_WEBHOOK_SECRET set, or it will"
+  echo "   reject every update. Check with: npx wrangler secret list"
+  PAYLOAD=$(cat <<JSON
+{
+  "url": "${URL}",
+  "allowed_updates": ["message"],
+  "drop_pending_updates": true
+}
+JSON
+)
+fi
+
+api setWebhook -H 'content-type: application/json' -d "${PAYLOAD}" | show || exit 1
 
 echo
 echo "3. Reading the registration back"
