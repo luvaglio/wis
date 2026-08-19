@@ -300,6 +300,126 @@ const EXTRACT_RESULT_LINKS = `(() => {
     .slice(0, 60);
 })()`;
 
+
+/**
+ * Find a named business's own site, and prove it before using it.
+ *
+ * A model naming a URL is guessing, and unverified guessing is what sent a
+ * London to Miami request to an airline with no transatlantic routes. The
+ * difference here is the proof: a candidate is only accepted if the page that
+ * loads actually identifies itself as that business. A guess that cannot be
+ * confirmed is discarded and reported, never used.
+ */
+export async function resolveSite(
+  env: Env,
+  name: string,
+  candidates: string[]
+): Promise<PageFinding | null> {
+  const targets = [...new Set(candidates)].filter(isSafeUrl).slice(0, 4);
+  if (targets.length === 0) return null;
+
+  const browser = await puppeteer.launch(env.BROWSER);
+
+  try {
+    for (const url of targets) {
+      const page = await browser.newPage();
+      try {
+        const response = await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: NAVIGATION_TIMEOUT_MS,
+        });
+
+        const status = response?.status() ?? 0;
+        if (status >= 400) {
+          console.warn(`resolveSite: ${url} returned ${status}`);
+          continue;
+        }
+
+        const extracted = (await page.evaluate(EXTRACT_PAGE_TEXT)) as {
+          title?: unknown;
+          text?: unknown;
+        };
+        const title = typeof extracted?.title === "string" ? extracted.title : "";
+        const text = typeof extracted?.text === "string" ? extracted.text : "";
+
+        if (!identifiesAs(name, title, text)) {
+          console.warn(`resolveSite: ${url} does not identify as "${name}"`);
+          continue;
+        }
+
+        const links = (await page.evaluate(EXTRACT_BOOKING_LINKS)) as unknown;
+        const bookingLinks = Array.isArray(links)
+          ? links.map(String).filter((l) => isSafeUrl(l)).slice(0, 5)
+          : [];
+
+        console.log(
+          `resolveSite: ${url} confirmed as "${name}", ${bookingLinks.length} booking link(s)`
+        );
+
+        return {
+          url,
+          title: title.slice(0, 200),
+          text: [
+            text.slice(0, MAX_PAGE_CHARS),
+            bookingLinks.length
+              ? `\n\nBooking or reservation links found on this page:\n${bookingLinks.join("\n")}`
+              : "\n\nNo booking or reservation link was found on this page.",
+          ].join(""),
+        };
+      } catch (err) {
+        console.warn(
+          `resolveSite: ${url} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      } finally {
+        try {
+          await page.close();
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    return null;
+  } finally {
+    try {
+      await browser.close();
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/**
+ * Does this page actually belong to the business we were looking for?
+ *
+ * Deliberately loose on punctuation and word order, and deliberately strict
+ * about every significant word appearing somewhere: a parked domain, a
+ * directory listing or a squatter will not carry the full name in its title or
+ * opening content.
+ */
+export function identifiesAs(name: string, title: string, text: string): boolean {
+  const haystack = `${title} ${text.slice(0, 3000)}`.toLowerCase();
+  const words = name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+
+  if (words.length === 0) return false;
+  return words.every((w) => haystack.includes(w));
+}
+
+/** Runs in the page. Anchors that look like a way to book. */
+const EXTRACT_BOOKING_LINKS = `(() => {
+  var wanted = /book|reserve|reservation|table|availability|dine/i;
+  return Array.from(document.querySelectorAll("a"))
+    .filter(function (a) {
+      return wanted.test((a.textContent || "") + " " + (a.getAttribute("href") || ""));
+    })
+    .map(function (a) { return a.href; })
+    .filter(function (h) { return /^https?:/.test(h); })
+    .slice(0, 10);
+})()`;
+
 /**
  * Only http and https, and never a private or loopback host.
  *

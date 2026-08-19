@@ -23,7 +23,8 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { getAgentByName } from "agents";
 
 import { METHOD_DESCRIPTIONS, type TaskMethod, type TaskTypeConfig } from "./config";
-import { readPages, searchTargets } from "./browse";
+import { readPages, searchTargets, resolveSite } from "./browse";
+import { route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
 
 export type TaskParams = {
   taskId: string;
@@ -203,6 +204,29 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     // that flies no transatlantic routes. A model asked to name a site answers
     // from shallow association. Searching lets the results decide what exists,
     // and the model never picks the supplier.
+    // A request that names a business is answerable without a search engine:
+    // go to that business's own site and read it. This is the path that
+    // matters for "book a table at X", and it is the one that was missing.
+    const named = await this.namedBusiness(request);
+
+    if (named) {
+      const site = await resolveSite(this.env, named.name, named.candidates);
+
+      if (site) {
+        const agent = await getAgentByName(this.env.USER_AGENT, userId);
+        const summary = await agent.interpretFindings(request, [site]);
+
+        if (summary.trim()) {
+          const detail = `${summary}\n\nRead from: ${hostOf(site.url)}.`;
+          return taskType === "research"
+            ? { kind: "success", detail }
+            : { kind: "needs_input", detail: `${detail} Say the word and I will go ahead.` };
+        }
+      }
+
+      console.warn(`could not confirm a site for "${named.name}"`);
+    }
+
     const urls = await searchTargets(this.env, request);
 
     if (urls.length === 0) {
@@ -243,6 +267,60 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
       kind: "needs_input",
       detail: `${summary}\n\nRead from: ${sources}. Say the word and I will go ahead.`,
     };
+  }
+
+  /**
+   * Pull out the business being talked about, and where its site might be.
+   *
+   * The model is good at "the official site of Locanda Locatelli" in a way it
+   * is not good at inventing a deep search URL, because the answer is a fact
+   * it has seen rather than a query string it must construct. Even so the
+   * answer is treated as a guess: resolveSite only accepts a candidate whose
+   * page identifies itself as that business.
+   */
+  private async namedBusiness(
+    request: string
+  ): Promise<{ name: string; candidates: string[] } | null> {
+    try {
+      const answer = await route(
+        this.env,
+        [
+          {
+            role: "system",
+            content:
+              "The user's request may name a specific business, such as a " +
+              "restaurant, hotel or shop. If it does, reply with two lines:\n" +
+              "NAME: <the business name, and its town or city if given>\n" +
+              "SITES: <up to three likely URLs for that business's own website, " +
+              "separated by spaces>\n" +
+              "If no specific business is named, reply exactly NONE.",
+          },
+          { role: "user", content: request.slice(0, 500) },
+        ],
+        {
+          maxTokens: ROUTER_STRUCTURED_TOKENS,
+          temperature: 0,
+          purpose: "resolve-business",
+          noThinking: true,
+        }
+      );
+
+      if (/^\s*NONE\s*$/im.test(answer)) return null;
+
+      const name = answer.match(/NAME:\s*(.+)/i)?.[1]?.trim();
+      const sites = answer.match(/SITES:\s*(.+)/i)?.[1] ?? "";
+      if (!name) return null;
+
+      const candidates = sites
+        .split(/\s+/)
+        .map((u) => u.trim().replace(/[),.]+$/, ""))
+        .filter((u) => u.startsWith("http"));
+
+      return candidates.length ? { name, candidates } : null;
+    } catch (err) {
+      console.warn("could not resolve a named business", err);
+      return null;
+    }
   }
 
   /** Send a narration message. Wording is generated, the decision to send is not. */

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isSafeUrl } from "../src/workflows/browse";
+import { isSafeUrl, identifiesAs } from "../src/workflows/browse";
 
 describe("isSafeUrl", () => {
   it("allows ordinary public pages", () => {
@@ -64,5 +64,27 @@ describe("isSafeUrl", () => {
     expect(isSafeUrl("")).toBe(false);
     expect(isSafeUrl("not a url")).toBe(false);
     expect(isSafeUrl("example.com")).toBe(false);
+  });
+});
+
+describe("identifiesAs", () => {
+  it("accepts a page that carries the business name", () => {
+    expect(
+      identifiesAs("Locanda Locatelli", "Locanda Locatelli | Italian Restaurant", "Welcome to our restaurant")
+    ).toBe(true);
+  });
+
+  it("ignores punctuation and word order", () => {
+    expect(identifiesAs("Cipriani, Marbella", "Marbella", "Cipriani opened here in 2019")).toBe(true);
+  });
+
+  it("rejects a parked or unrelated page", () => {
+    expect(identifiesAs("Locanda Locatelli", "Domain for sale", "Buy this domain today")).toBe(false);
+    expect(identifiesAs("Cipriani Marbella", "Cipriani New York", "Our Manhattan location")).toBe(false);
+  });
+
+  it("rejects when the name is empty or trivial", () => {
+    expect(identifiesAs("", "Anything", "Anything")).toBe(false);
+    expect(identifiesAs("a of", "Anything", "Anything")).toBe(false);
   });
 });
