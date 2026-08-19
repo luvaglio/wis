@@ -8,11 +8,11 @@
 # knows an update genuinely came from Telegram.
 #
 # Usage:
-#   read -rs TELEGRAM_BOT_TOKEN && export TELEGRAM_BOT_TOKEN
-#   read -rs TELEGRAM_WEBHOOK_SECRET && export TELEGRAM_WEBHOOK_SECRET
 #   ./scripts/register-telegram-webhook.sh
 #
-# Reading with `read -rs` keeps both values out of your shell history.
+# It prompts for anything it needs. Input is not echoed and never reaches your
+# shell history. You can also pre-set TELEGRAM_BOT_TOKEN and
+# TELEGRAM_WEBHOOK_SECRET in the environment and it will use those instead.
 #
 # The secret must be byte-identical to the one the Worker holds:
 #   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
@@ -21,7 +21,23 @@
 
 set -euo pipefail
 
-: "${TELEGRAM_BOT_TOKEN:?export TELEGRAM_BOT_TOKEN first}"
+# Prompt rather than requiring the values up front. A bare `read -rs` at the
+# shell shows no prompt and echoes nothing, which is indistinguishable from a
+# hung command, and `read -p` does not mean the same thing in zsh as in bash.
+# This script runs under bash via its shebang, so prompting here behaves the
+# same whatever shell invoked it.
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  # Reads from a terminal or a pipe. `|| true` keeps `set -e` from killing the
+  # script on EOF, so the empty case is reported properly below.
+  read -rsp "Bot token (from @BotFather, input hidden): " TELEGRAM_BOT_TOKEN || true
+  echo
+fi
+
+if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then
+  echo "No bot token given. Get one from @BotFather, then run this again." >&2
+  exit 1
+fi
+
 
 # The secret is optional, and must mirror the Worker exactly:
 #   set on both, or set on neither.
@@ -30,6 +46,14 @@ set -euo pipefail
 # the only symptom. Leave TELEGRAM_WEBHOOK_SECRET unset here if you have not
 # set it with `wrangler secret put`.
 TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-}"
+
+if [ -z "${TELEGRAM_WEBHOOK_SECRET}" ]; then
+  echo
+  echo "Webhook secret. Leave blank if the Worker does not have one set."
+  echo "Check with: npx wrangler secret list"
+  read -rsp "Webhook secret (blank for none, input hidden): " TELEGRAM_WEBHOOK_SECRET || true
+  echo
+fi
 
 ORIGIN="${PUBLIC_ORIGIN:-https://wis.ai}"
 URL="${ORIGIN}/webhooks/telegram"

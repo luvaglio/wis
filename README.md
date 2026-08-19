@@ -134,13 +134,17 @@ is set, that check is skipped, so set the secrets before registering.
    npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
    ```
 
-3. Register the webhook:
+3. Register the webhook. The script prompts for what it needs, hides the
+   input, and keeps it out of your shell history:
 
    ```bash
-   read -rs TELEGRAM_BOT_TOKEN && export TELEGRAM_BOT_TOKEN
-   read -rs TELEGRAM_WEBHOOK_SECRET && export TELEGRAM_WEBHOOK_SECRET
    ./scripts/register-telegram-webhook.sh
    ```
+
+   Leave the secret prompt blank if the Worker does not have
+   `TELEGRAM_WEBHOOK_SECRET` set. It must be set on both sides or neither:
+   a secret on one side only means Telegram delivers, the Worker rejects
+   every update, and nothing happens with no error anywhere.
 
 `TELEGRAM_BOT_USERNAME` is what builds the `t.me/<bot>?start=<token>` deep link
 on the Connect button, so linking shows nothing useful until it is set. A leading
