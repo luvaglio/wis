@@ -7,7 +7,7 @@
  * outset even though there is a small number of task types at launch.
  */
 
-export type TaskMethod = "api" | "browser" | "voice" | "email";
+export type TaskMethod = "search" | "api" | "browser" | "voice" | "email";
 
 export type TaskTypeConfig = {
   taskType: string;
@@ -20,7 +20,7 @@ export type TaskTypeConfig = {
 
 const FALLBACK: TaskTypeConfig = {
   taskType: "generic",
-  methods: ["api", "browser"],
+  methods: ["search", "api", "browser"],
   maxAttempts: 2,
   attemptTimeout: 90,
   notifyOnSwitch: true,
@@ -65,6 +65,7 @@ export async function getTaskTypeConfig(
 
 /** How a method is described to the user when we switch to it. */
 export const METHOD_DESCRIPTIONS: Record<TaskMethod, string> = {
+  search: "searching the web",
   api: "a direct lookup",
   browser: "opening it in a browser and doing it by hand",
   voice: "calling them",

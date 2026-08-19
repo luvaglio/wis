@@ -25,6 +25,7 @@ import { getAgentByName } from "agents";
 import { METHOD_DESCRIPTIONS, type TaskMethod, type TaskTypeConfig } from "./config";
 import { readPages, searchTargets, resolveSite } from "./browse";
 import { route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
+import { webSearch, webSearchAvailable } from "../lib/websearch";
 
 export type TaskParams = {
   taskId: string;
@@ -147,6 +148,35 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     taskType: string
   ): Promise<MethodOutcome> {
     switch (method) {
+      case "search": {
+        if (!webSearchAvailable(this.env)) {
+          return {
+            kind: "unavailable",
+            detail: "web search is not configured, so I could not look this up",
+          };
+        }
+        try {
+          const result = await webSearch(this.env, request);
+          if (!result?.answer.trim()) {
+            return { kind: "unavailable", detail: "the search came back with nothing usable" };
+          }
+
+          const sources = result.sources.length ? `\n\nRead from: ${result.sources.join(", ")}.` : "";
+
+          // Finding out is the whole job for research. Anything that ends in
+          // committing the user to something still needs their word first
+          // (SPEC 9.4 item 3), however complete the finding is.
+          return taskType === "research"
+            ? { kind: "success", detail: `${result.answer}${sources}` }
+            : {
+                kind: "needs_input",
+                detail: `${result.answer}${sources}\n\nSay the word and I will go ahead.`,
+              };
+        } catch (err) {
+          return { kind: "error", detail: describeError(err) };
+        }
+      }
+
       case "api":
         // No first-party task API is wired up at launch, so this tier is a
         // fast miss that costs nothing and falls straight through to browsing.
