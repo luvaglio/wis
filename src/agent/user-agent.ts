@@ -286,13 +286,25 @@ export class UserAgent extends Agent<Env, UserState> {
    * (SPEC 10.2). The Workflow decides that this event happened and that the
    * user is told about it. This method decides only the wording.
    */
-  async narrate(event: string, opts: { final?: boolean } = {}): Promise<void> {
+  async narrate(
+    event: string,
+    opts: { final?: boolean; fallback?: string } = {}
+  ): Promise<void> {
     const { prefs } = await this.loadPreferences();
 
-    let text: string;
+    // The event text is written as an instruction to the model, in second
+    // person, so it must never be sent to the user verbatim. Every call site
+    // supplies a plain sentence to fall back to instead.
+    const fallback = opts.fallback ?? "";
+
+    let text = "";
     try {
       // Nuance is warranted on a final outcome, so those go to the reasoning
       // tier. Routine transitions go to the cheap tier.
+      //
+      // The budget has to cover the model's own reasoning as well as the line
+      // we want back. Budgeting for the line alone produced nothing but
+      // scratchpad, which the think-strip then reduced to an empty string.
       const call = opts.final ? reason : route;
       text = await call(
         this.env,
@@ -300,11 +312,22 @@ export class UserAgent extends Agent<Env, UserState> {
           { role: "system", content: narrationPrompt(prefs) },
           { role: "user", content: event },
         ],
-        { maxTokens: 160, temperature: 0.4, purpose: "task-narration" }
+        { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0.4, purpose: "task-narration" }
       );
     } catch (err) {
-      console.warn("narration failed, sending plain event", err);
-      text = event;
+      console.warn("narration call failed", err);
+    }
+
+    if (!text.trim()) {
+      console.warn("narration produced no text, using the plain fallback");
+      text = fallback;
+    }
+
+    // Still nothing worth sending. Staying silent is better than pushing an
+    // empty message, which the channel would reject anyway.
+    if (!text.trim()) {
+      console.error("no narration and no fallback, skipping this update");
+      return;
     }
 
     this.append("assistant", text);

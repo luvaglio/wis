@@ -59,6 +59,14 @@ async function send(
   channelUserId: string,
   text: string
 ): Promise<void> {
+  // Last line of defence. Every channel rejects an empty body, so an empty
+  // string here is always a bug upstream rather than something to deliver.
+  // Log it where it can be traced instead of turning it into a 400.
+  if (!text.trim()) {
+    console.error(`refusing to send an empty message on ${channel}`);
+    return;
+  }
+
   try {
     if (channel === "telegram") return await sendTelegram(env, channelUserId, text);
     return await sendWhatsApp(env, channelUserId, text);

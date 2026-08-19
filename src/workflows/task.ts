@@ -46,7 +46,11 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     // Acknowledge before any work starts, so the user is never left wondering
     // whether the request landed.
     await step.do("notify-accepted", () =>
-      this.notify(userId, `You have started working on this request: "${truncate(request)}". You have not finished yet.`)
+      this.notify(
+        userId,
+        `You have started working on this request: "${truncate(request)}". You have not finished yet.`,
+        "I am on it. I will come back to you when I have something."
+      )
     );
 
     let lastDetail = "";
@@ -60,7 +64,8 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
         await step.do(`notify-switch-${i}`, () =>
           this.notify(
             userId,
-            `The previous approach did not work: ${lastDetail}. You are now trying ${METHOD_DESCRIPTIONS[method]} instead. You have not finished yet.`
+            `The previous approach did not work: ${lastDetail}. You are now trying ${METHOD_DESCRIPTIONS[method]} instead. You have not finished yet.`,
+            `That did not work: ${lastDetail}. I am trying ${METHOD_DESCRIPTIONS[method]} instead.`
           )
         );
       }
@@ -96,6 +101,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
           this.finish(taskId, userId, "partial", outcome.detail, {
             final: true,
             template: `You got part of the way and now need something from the user before you can continue: ${outcome.detail}. Ask for exactly that, and nothing else.`,
+            fallback: `I need something from you before I can finish: ${outcome.detail}`,
           })
         );
         return { status: "partial", detail: outcome.detail };
@@ -109,6 +115,9 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     await step.do("complete-failure", () =>
       this.finish(taskId, userId, "failed", lastDetail, {
         final: true,
+        fallback:
+          `I could not get that done. I tried ${tried}. The last problem was: ${lastDetail}. ` +
+          `I can try again later, try somewhere else if you name it, or leave it with you.`,
         template:
           `You could not complete this request. You tried ${tried}. The last problem was: ${lastDetail}. ` +
           `Tell the user plainly that it did not work, and offer these next options: you can try again later, ` +
@@ -188,9 +197,14 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
   }
 
   /** Send a narration message. Wording is generated, the decision to send is not. */
-  private async notify(userId: string, event: string, final = false): Promise<void> {
+  private async notify(
+    userId: string,
+    event: string,
+    fallback: string,
+    final = false
+  ): Promise<void> {
     const agent = await getAgentByName(this.env.USER_AGENT, userId);
-    await agent.narrate(event, { final });
+    await agent.narrate(event, { final, fallback });
   }
 
   private async finish(
@@ -198,13 +212,18 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     userId: string,
     status: string,
     detail: string,
-    opts: { final?: boolean; template?: string } = {}
+    opts: { final?: boolean; template?: string; fallback?: string } = {}
   ): Promise<void> {
     const agent = await getAgentByName(this.env.USER_AGENT, userId);
     await agent.completeTask(taskId, status, detail);
     await agent.narrate(
       opts.template ?? `You finished the request successfully. The outcome was: ${detail}.`,
-      { final: opts.final ?? true }
+      {
+        final: opts.final ?? true,
+        // Always a plain sentence to fall back to. A task that finishes in
+        // silence is worse than one that reports itself awkwardly.
+        fallback: opts.fallback ?? `That is done. ${detail}`,
+      }
     );
   }
 }
