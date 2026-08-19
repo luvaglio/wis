@@ -19,7 +19,7 @@
  * confirmation (SPEC 9.4 item 3).
  */
 
-const ANTHROPIC_VERSION = "2023-06-01";
+import { callAnthropic } from "./models";
 
 /**
  * Models that support the current search tool. Older ones take the basic
@@ -67,32 +67,18 @@ export async function webSearch(
     ? "web_search_20260209"
     : "web_search_20250305";
 
-  const url =
-    `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/` +
-    `${env.AI_GATEWAY_ID}/anthropic/v1/messages`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY!,
-      "anthropic-version": ANTHROPIC_VERSION,
-      "cf-aig-metadata": JSON.stringify({ purpose: "web-search" }),
-    },
-    body: JSON.stringify({
+  const body = (await callAnthropic(
+    env,
+    {
       model,
       max_tokens: 2000,
       system: SEARCH_SYSTEM_PROMPT,
       tools: [{ type: toolType, name: "web_search", max_uses: maxUses }],
       messages: [{ role: "user", content: query.slice(0, 2000) }],
-    }),
-  });
+    },
+    "web-search"
+  )) as {
 
-  if (!res.ok) {
-    throw new Error(`web search failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  }
-
-  const body = (await res.json()) as {
     content?: Array<{
       type: string;
       text?: string;

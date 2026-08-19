@@ -207,19 +207,26 @@ These need account-level access that the Workers OAuth token does not carry.
    Sign-in codes go to people typing their address for the first time, so the
    REST path is the only workable one. Without the token, auth mail falls back
    to the binding and only reaches verified addresses.
-3. **Fix the DMARC record.** `_dmarc.wis.ai` currently contains
-   `v=spf1 -all`, which is an SPF value in a DMARC record and is not a valid
-   policy. Email Sending expects `v=DMARC1; p=reject;`. The MX, SPF and DKIM
-   records for sending were created automatically and are correct.
-4. **Add MX and SPF records for `me.wis.ai`** so each assistant's own inbox
-   works (SPEC 6.1 keeps it on a separate subdomain from auth mail so a spam
-   complaint against one assistant cannot damage deliverability of account
-   mail). Three MX records at priorities 49, 63 and 99 pointing at
-   `route1.mx.cloudflare.net`, `route2.mx.cloudflare.net` and
-   `route3.mx.cloudflare.net`, plus an SPF TXT record of
-   `v=spf1 include:_spf.mx.cloudflare.net ~all`.
-5. **Point `www.wis.ai` at the Worker.** It currently resolves to parking IPs
-   outside Cloudflare. The apex is live.
+3. **Add MX records for `me.wis.ai`** so each assistant's own inbox receives
+   mail (SPEC 6.1 keeps it on a separate subdomain from auth mail, so a spam
+   complaint against one assistant cannot damage deliverability of sign-in
+   codes). Sending from the subdomain is already onboarded, and Cloudflare has
+   created its `cf-bounce` MX, SPF, DKIM and DMARC records. Receiving needs the
+   subdomain added under Email Routing settings, which creates the MX records
+   pointing at `route1/2/3.mx.cloudflare.net`. Until then, mail to
+   `{handle}@me.wis.ai` is not delivered anywhere.
+4. **Replace the `*.wis.ai` wildcard with explicit records.** The wildcard
+   answers every name, including a TXT record returning `v=spf1 -all` for any
+   subdomain without one of its own. That is what made `_dmarc.wis.ai` appear
+   misconfigured, and it will shadow any DKIM or DMARC record that is ever
+   missed. It also makes unused names resolve and fail with a TLS error rather
+   than not resolving at all. Removing it needs a check for anything currently
+   depending on it.
+5. **Attach `wis.ai` and `www.wis.ai` as Worker custom domains.** This
+   replaces hand-managed records with ones Cloudflare creates and maintains,
+   and is the explicit alternative to the wildcard. It is blocked while a
+   wildcard or manual A record covers the hostname, so the wildcard has to go
+   first.
 6. **Configure a credential vault** before enabling credential cards. Those
    cards fail closed while it is unset, which is deliberate: better to tell the
    user it did not save than to put a raw credential somewhere it does not

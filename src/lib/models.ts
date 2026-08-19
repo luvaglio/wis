@@ -92,40 +92,88 @@ async function anthropicViaGateway(
     .join("\n\n");
   const turns = messages.filter((m) => m.role !== "system");
 
-  const url =
-    `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/` +
-    `${env.AI_GATEWAY_ID}/anthropic/v1/messages`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY!,
-      "anthropic-version": ANTHROPIC_VERSION,
-      ...(opts.purpose ? { "cf-aig-metadata": JSON.stringify({ purpose: opts.purpose }) } : {}),
-    },
-    body: JSON.stringify({
+  const body = await callAnthropic(
+    env,
+    {
       model,
       max_tokens: opts.maxTokens ?? 1024,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(system ? { system } : {}),
       messages: turns.map((m) => ({ role: m.role, content: m.content })),
-    }),
-  });
+    },
+    opts.purpose
+  );
 
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`Reasoning model call failed (${res.status}): ${detail.slice(0, 400)}`);
-  }
-
-  const body = (await res.json()) as {
-    content?: Array<{ type: string; text?: string }>;
-  };
-  return (body.content ?? [])
+  const content = (body as { content?: Array<{ type: string; text?: string }> }).content ?? [];
+  return content
     .filter((c) => c.type === "text")
     .map((c) => c.text ?? "")
     .join("")
     .trim();
+}
+
+/** Anthropic's own endpoint, used when the gateway is not there. */
+const ANTHROPIC_DIRECT = "https://api.anthropic.com/v1/messages";
+
+/**
+ * Call Anthropic, through AI Gateway when it exists.
+ *
+ * SPEC 8.3 routes every model call through the gateway, and that is what this
+ * tries first. But the gateway is account infrastructure this Worker cannot
+ * create, and when it is missing it rejects the request itself with an
+ * AiGatewayError rather than passing it on. Without a fallback, configuring a
+ * perfectly good API key made the assistant stop answering entirely.
+ *
+ * So a gateway-level rejection falls back to Anthropic directly and logs the
+ * gap loudly. An error from Anthropic itself, such as a bad key, is passed
+ * straight through: retrying that elsewhere would only hide it.
+ */
+export async function callAnthropic(
+  env: Env,
+  payload: Record<string, unknown>,
+  purpose?: string
+): Promise<unknown> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-api-key": env.ANTHROPIC_API_KEY!,
+    "anthropic-version": ANTHROPIC_VERSION,
+    ...(purpose ? { "cf-aig-metadata": JSON.stringify({ purpose }) } : {}),
+  };
+
+  if (env.AI_GATEWAY_ID) {
+    const gatewayUrl =
+      `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/` +
+      `${env.AI_GATEWAY_ID}/anthropic/v1/messages`;
+
+    const res = await fetch(gatewayUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) return res.json();
+
+    const detail = await res.text();
+
+    // Only a rejection by the gateway itself is worth retrying elsewhere.
+    if (!/AiGatewayError/i.test(detail)) {
+      throw new Error(`Anthropic call failed (${res.status}): ${detail.slice(0, 400)}`);
+    }
+
+    warnMissingGateway(env);
+  }
+
+  const res = await fetch(ANTHROPIC_DIRECT, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Anthropic call failed (${res.status}): ${(await res.text()).slice(0, 400)}`);
+  }
+
+  return res.json();
 }
 
 /**
