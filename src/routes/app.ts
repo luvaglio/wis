@@ -13,14 +13,45 @@
 import { esc, html } from "../lib/http";
 import { resolveSession } from "./auth";
 import { proactivityEstimate } from "../agent/prompts";
+import { COUNTRIES, LANGUAGES } from "../lib/locales";
 
+/**
+ * The communication styles offered (SPEC 3, step 3).
+ *
+ * "Something else" and its free-text box are not here. That option was
+ * normalised back into one of these four at storage time anyway, so it asked
+ * the user to write something that was then quietly discarded.
+ */
 const PERSONALITIES = [
   { value: "butler", label: "British butler. Dry, precise, never fawning." },
   { value: "warm", label: "Warm. Friendly and human." },
   { value: "no-nonsense", label: "No-nonsense. Answers and moves on." },
   { value: "formal", label: "Formal. Professional register throughout." },
-  { value: "custom", label: "Something else." },
 ] as const;
+
+/** Options for a select, with one marked selected. */
+function options(
+  items: ReadonlyArray<{ value: string; label: string }>,
+  selected: string | null,
+  placeholder?: string
+): string {
+  const head = placeholder
+    ? `<option value="" ${selected ? "" : "selected"} disabled>${esc(placeholder)}</option>`
+    : "";
+  return (
+    head +
+    items
+      .map(
+        (i) =>
+          `<option value="${esc(i.value)}"${i.value === selected ? " selected" : ""}>${esc(i.label)}</option>`
+      )
+      .join("")
+  );
+}
+
+const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }));
+const DIAL_OPTIONS = COUNTRIES.map((c) => ({ value: c.dial, label: `${c.code} ${c.dial}` }));
+const LANGUAGE_OPTIONS = LANGUAGES.map((l) => ({ value: l.code, label: l.name }));
 
 type Me = {
   id: string;
@@ -35,6 +66,7 @@ type Me = {
   personality: string | null;
   language: string | null;
   proactivity: number | null;
+  city: string | null;
   timezone: string | null;
   handle: string | null;
 };
@@ -46,7 +78,7 @@ export async function renderApp(request: Request, env: Env): Promise<Response> {
   }
 
   const me = await env.DB.prepare(
-    `SELECT u.id, u.email, u.name, u.country, u.mobile_number, u.mobile_verified, u.onboarded,
+    `SELECT u.id, u.email, u.name, u.country, u.city, u.mobile_number, u.mobile_verified, u.onboarded,
             p.assistant_name, p.address_as, p.personality, p.language, p.proactivity,
             p.timezone, h.handle
        FROM users u
@@ -69,7 +101,7 @@ export async function renderApp(request: Request, env: Env): Promise<Response> {
 
   const body = me.onboarded
     ? assistantPage(me, connections.results ?? [], env)
-    : onboardingPage(me);
+    : onboardingPage(me, env);
 
   return html(page(me.onboarded ? "Your assistant" : "Getting started", body));
 }
@@ -84,7 +116,7 @@ function page(title: string, body: string): string {
 <meta name="robots" content="noindex">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#fbfbf9">
-<link rel="stylesheet" href="/assets/style.css?v=6">
+<link rel="stylesheet" href="/assets/style.css?v=7">
 </head>
 <body>
   <div class="page">
@@ -96,7 +128,7 @@ function page(title: string, body: string): string {
 ${body}
     </main>
   </div>
-  <script src="/assets/app.js?v=6"></script>
+  <script src="/assets/app.js?v=7"></script>
 </body>
 </html>`;
 }
@@ -106,7 +138,7 @@ ${body}
  * chrome and no step labels. Account fields come first because they are
  * account fields, not part of the personality conversation (SPEC 2.1).
  */
-function onboardingPage(me: Me): string {
+function onboardingPage(me: Me, env: Env): string {
   return `<h1>Let's grab a coffee.</h1>
 <p>A few things, then your assistant is yours.</p>
 
@@ -115,10 +147,17 @@ function onboardingPage(me: Me): string {
     <label class="q" for="name">What should I put on the account?</label>
     <input class="field" id="name" name="name" autocomplete="name" placeholder="Full name" value="${esc(me.name)}" required>
     <div class="field-row">
-      <input class="field" id="country" name="country" autocomplete="country-name" placeholder="Country" value="${esc(me.country)}">
-      <input class="field" id="mobile" name="mobile_number" inputmode="tel" autocomplete="tel" placeholder="Mobile number" value="${esc(me.mobile_number)}">
+      <select class="field" id="country" name="country" autocomplete="country">
+        ${options(COUNTRY_OPTIONS, me.country, "Country")}
+      </select>
+      <input class="field" id="city" name="city" autocomplete="address-level2" placeholder="City" value="${esc(me.city)}">
     </div>
-    <input class="field" id="address" name="address" autocomplete="street-address" placeholder="Address">
+    <div class="field-row">
+      <select class="field dial" id="dial" name="dial" aria-label="Country calling code">
+        ${options(DIAL_OPTIONS, null)}
+      </select>
+      <input class="field" id="mobile" name="mobile_number" inputmode="tel" autocomplete="tel-national" placeholder="Mobile number" value="${esc(me.mobile_number)}">
+    </div>
     <p class="disclaimer">Your number is a contact detail, not a login. It gets confirmed when you connect WhatsApp or Telegram.</p>
   </fieldset>
 
@@ -133,7 +172,7 @@ function onboardingPage(me: Me): string {
   </fieldset>
 
   <fieldset class="step">
-    <label class="q">What sort of manner do you want?</label>
+    <label class="q">What communication style should <span id="style-label">your assistant</span> use?</label>
     <div class="choices">
       ${PERSONALITIES.map(
         (p) =>
@@ -142,12 +181,13 @@ function onboardingPage(me: Me): string {
           }> ${p.label}</label>`
       ).join("\n      ")}
     </div>
-    <input class="field" id="personality_other" name="personality_other" placeholder="Describe it in your own words" hidden>
   </fieldset>
 
   <fieldset class="step">
     <label class="q" for="language">Which language?</label>
-    <input class="field" id="language" name="language" placeholder="English" value="en">
+    <select class="field" id="language" name="language">
+      ${options(LANGUAGE_OPTIONS, "en")}
+    </select>
   </fieldset>
 
   <fieldset class="step">
@@ -167,10 +207,10 @@ function onboardingPage(me: Me): string {
   <fieldset class="step">
     <label class="q" for="handle">Your assistant's email address.</label>
     <div class="field-row">
-      <input class="field" id="handle" name="handle" placeholder="Leave blank and I'll pick one" maxlength="24">
-      <span class="suffix">@me.wis.ai</span>
+      <input class="field" id="handle" name="handle" maxlength="24" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <span class="suffix">@${esc(env.ASSISTANT_EMAIL_DOMAIN)}</span>
     </div>
-    <p class="disclaimer" id="handle-status"></p>
+    <p class="disclaimer" id="handle-status">Filled in for you. Change it if you would rather something else.</p>
   </fieldset>
 
   <button class="start-btn" type="submit">Done</button>
@@ -242,7 +282,7 @@ ${connections.length > 1 ? `<p class="disclaimer">Both are connected. Only the a
   <label class="q" for="address_as">How they address you.</label>
   <input class="field" id="address_as" name="address_as" value="${esc(me.address_as)}" placeholder="Sir, Madam, or your name" maxlength="40">
 
-  <label class="q">Their manner.</label>
+  <label class="q">Communication style.</label>
   <div class="choices">
     ${PERSONALITIES.map(
       (p) =>
@@ -253,7 +293,9 @@ ${connections.length > 1 ? `<p class="disclaimer">Both are connected. Only the a
   </div>
 
   <label class="q" for="language">Language.</label>
-  <input class="field" id="language" name="language" value="${esc(me.language ?? "en")}" maxlength="12">
+  <select class="field" id="language" name="language">
+    ${options(LANGUAGE_OPTIONS, me.language ?? "en")}
+  </select>
 
   <label class="q" for="proactivity">How proactive should ${esc(me.assistant_name ?? "Wis")} be?</label>
   <input class="slider" type="range" id="proactivity" name="proactivity" min="1" max="5" step="1" value="${esc(me.proactivity ?? 3)}">

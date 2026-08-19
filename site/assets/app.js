@@ -38,9 +38,18 @@ var ESTIMATES = {
 var slider = byId('proactivity');
 var estimate = byId('estimate');
 
-if (slider && estimate) {
+function paintSlider(el) {
+  var min = Number(el.min || 0);
+  var max = Number(el.max || 100);
+  var pct = max === min ? 0 : ((Number(el.value) - min) / (max - min)) * 100;
+  el.style.setProperty('--fill', pct + '%');
+}
+
+if (slider) {
+  paintSlider(slider);
   slider.addEventListener('input', function () {
-    estimate.textContent = ESTIMATES[slider.value] || ESTIMATES[3];
+    paintSlider(slider);
+    if (estimate) estimate.textContent = ESTIMATES[slider.value] || ESTIMATES[3];
   });
 }
 
@@ -49,50 +58,89 @@ if (slider && estimate) {
 // follows it rather than saying "they".
 var assistantNameField = byId('assistant_name');
 var assistantLabel = byId('assistant-label');
+var styleLabel = byId('style-label');
 
-if (assistantNameField && assistantLabel) {
-  assistantNameField.addEventListener('input', function () {
-    var name = assistantNameField.value.trim();
-    assistantLabel.textContent = name || 'your assistant';
-  });
+function paintAssistantName() {
+  var name = assistantNameField.value.trim() || 'your assistant';
+  if (assistantLabel) assistantLabel.textContent = name;
+  if (styleLabel) styleLabel.textContent = name;
 }
 
-// ---- personality "something else" reveal ----
-var otherField = byId('personality_other');
-if (otherField) {
-  document.querySelectorAll('input[name="personality"]').forEach(function (radio) {
-    radio.addEventListener('change', function () {
-      otherField.hidden = radio.value !== 'custom' || !radio.checked;
-      if (!otherField.hidden) otherField.focus();
-    });
-  });
+if (assistantNameField) {
+  assistantNameField.addEventListener('input', paintAssistantName);
 }
 
-// ---- live handle availability (SPEC 6.2) ----
+// ---- the assistant's address (SPEC 6.2) ----
+// Generated and filled in rather than left blank. The default format is the
+// assistant's name plus a short suffix, so it follows the name as it is typed
+// until the user edits the field themselves, after which it is left alone.
 var handleInput = byId('handle');
 var handleStatus = byId('handle-status');
 var handleTimer;
+var handleEdited = false;
+
+var SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+function randomSuffix() {
+  var bytes = new Uint8Array(4);
+  (window.crypto || window.msCrypto).getRandomValues(bytes);
+  var out = '';
+  for (var i = 0; i < bytes.length; i++) {
+    out += SUFFIX_ALPHABET[bytes[i] % SUFFIX_ALPHABET.length];
+  }
+  return out;
+}
+
+var handleSuffix = randomSuffix();
+
+function sanitiseHandle(raw) {
+  return (raw || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 18);
+}
+
+function suggestedHandle() {
+  var base = sanitiseHandle(assistantNameField ? assistantNameField.value : '') || 'wis';
+  return base + '.' + handleSuffix;
+}
+
+function fillSuggestedHandle() {
+  if (!handleInput || handleEdited) return;
+  handleInput.value = suggestedHandle();
+  checkHandle();
+}
+
+function checkHandle() {
+  if (!handleInput || !handleStatus) return;
+  clearTimeout(handleTimer);
+  var value = handleInput.value.trim();
+  if (!value) { handleStatus.textContent = ''; return; }
+  if (value === originalHandle) { handleStatus.textContent = 'This is the current address.'; return; }
+
+  handleTimer = setTimeout(function () {
+    fetch('/api/handle/check?handle=' + encodeURIComponent(value))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) return;
+        handleStatus.textContent = data.available
+          ? data.address + ' is free.'
+          : (data.reason || 'That one is taken.');
+      });
+  }, 300);
+}
+
+var originalHandle = handleInput ? handleInput.value.trim() : '';
 
 if (handleInput && handleStatus) {
-  var originalHandle = handleInput.value.trim();
-
   handleInput.addEventListener('input', function () {
-    clearTimeout(handleTimer);
-    var value = handleInput.value.trim();
-    if (!value) { handleStatus.textContent = ''; return; }
-    if (value === originalHandle) { handleStatus.textContent = 'This is the current address.'; return; }
-
-    handleTimer = setTimeout(function () {
-      fetch('/api/handle/check?handle=' + encodeURIComponent(value))
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data.ok) return;
-          handleStatus.textContent = data.available
-            ? data.address + ' is free.'
-            : (data.reason || 'That one is taken.');
-        });
-    }, 300);
+    handleEdited = true;
+    checkHandle();
   });
+}
+
+// On the onboarding form the name drives both the labels and the address.
+if (assistantNameField) {
+  assistantNameField.addEventListener('input', fillSuggestedHandle);
+  fillSuggestedHandle();
+  paintAssistantName();
 }
 
 // ---- onboarding submit ----
@@ -109,11 +157,16 @@ if (form) {
     var data = new FormData(form);
     var personality = data.get('personality');
 
+    // The number is stored in international form so it can be matched against
+    // whatever WhatsApp or Telegram reports when a channel is linked.
+    var national = (data.get('mobile_number') || '').toString().trim().replace(/^0+/, '');
+    var dial = (data.get('dial') || '').toString();
+
     post('/api/account', {
       name: data.get('name'),
       country: data.get('country'),
-      address: data.get('address'),
-      mobile_number: data.get('mobile_number')
+      city: data.get('city'),
+      mobile_number: national ? dial + national.replace(/[^0-9]/g, '') : ''
     })
       .then(function (accountResult) {
         if (!accountResult.ok) throw new Error(accountResult.error || 'Could not save your details.');
@@ -121,7 +174,6 @@ if (form) {
           assistant_name: data.get('assistant_name'),
           address_as: data.get('address_as'),
           personality: personality,
-          personality_other: data.get('personality_other'),
           language: data.get('language'),
           proactivity: Number(data.get('proactivity')),
           timezone: currentTimezone(),

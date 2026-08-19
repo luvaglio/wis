@@ -16,6 +16,7 @@ import { json, badRequest, unauthorized } from "../lib/http";
 import { proactivityEstimate, type PersonalityPreset } from "../agent/prompts";
 import { shortCode, uuid } from "../lib/ids";
 import { resolveSession } from "./auth";
+import { isCountryCode, isLanguageCode } from "../lib/locales";
 
 const PRESETS: PersonalityPreset[] = ["butler", "warm", "no-nonsense", "formal", "custom"];
 
@@ -27,21 +28,27 @@ export async function saveAccount(request: Request, env: Env): Promise<Response>
   const body = (await request.json().catch(() => null)) as {
     name?: string;
     country?: string;
-    address?: string;
+    city?: string;
     mobile_number?: string;
   } | null;
 
   const name = (body?.name ?? "").trim().slice(0, 120);
   if (!name) return badRequest("We need a name to address you by.");
 
+  // Country is a code from a fixed list rather than whatever was typed, so it
+  // is comparable across accounts. An unrecognised one is dropped rather than
+  // stored as free text.
+  const country = (body?.country ?? "").trim().toUpperCase();
+  const city = (body?.city ?? "").trim().slice(0, 80) || null;
+
   await env.DB.prepare(
-    `UPDATE users SET name = ?, country = ?, address = ?, mobile_number = ? WHERE id = ?`
+    `UPDATE users SET name = ?, country = ?, city = ?, mobile_number = ? WHERE id = ?`
   )
     .bind(
       name,
-      (body?.country ?? "").trim().slice(0, 60) || null,
-      (body?.address ?? "").trim().slice(0, 500) || null,
-      (body?.mobile_number ?? "").trim().slice(0, 32) || null,
+      isCountryCode(country) ? country : null,
+      city,
+      normaliseMobile(body?.mobile_number ?? ""),
       userId
     )
     .run();
@@ -84,8 +91,9 @@ export async function completeOnboarding(request: Request, env: Env): Promise<Re
     body?.personality_other
   );
 
-  // Step 4. Language, auto-suggested from country/locale, overridable.
-  const language = (body?.language ?? "en").trim().slice(0, 12) || "en";
+  // Step 4. Language, chosen from the offered list.
+  const requestedLanguage = (body?.language ?? "en").trim();
+  const language = isLanguageCode(requestedLanguage) ? requestedLanguage : "en";
 
   // Step 5. Proactivity, 1 to 5.
   const proactivity = clamp(Number(body?.proactivity ?? 3), 1, 5);
@@ -177,9 +185,9 @@ export async function updatePreferences(request: Request, env: Env): Promise<Res
     values.push(body.personality);
   }
 
-  if (typeof body.language === "string" && body.language.trim()) {
+  if (typeof body.language === "string" && isLanguageCode(body.language.trim())) {
     sets.push("language = ?");
-    values.push(body.language.trim().slice(0, 12));
+    values.push(body.language.trim());
   }
 
   if (body.proactivity !== undefined) {
@@ -503,6 +511,21 @@ async function assignHandle(
  * up in a formatter. Asking Intl whether it recognises the zone is both the
  * validation and the check that it will actually work later.
  */
+/**
+ * Keep the number in international form.
+ *
+ * Channel linking matches this against whatever WhatsApp or Telegram reports,
+ * which is always international, so storing a national number would never
+ * match and the implicit verification in SPEC 4.3 would never fire.
+ */
+function normaliseMobile(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const digits = trimmed.replace(/[^0-9]/g, "");
+  if (digits.length < 7) return null;
+  return `+${digits}`.slice(0, 20);
+}
+
 function sanitiseTimezone(raw: string): string | null {
   const zone = raw.trim();
   if (!zone || zone.length > 64) return null;
