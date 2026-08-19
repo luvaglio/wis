@@ -119,8 +119,14 @@ is set, that check is skipped, so set the secrets before registering.
 
 1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and note the token
    and the bot username.
-2. Set the secrets. `TELEGRAM_WEBHOOK_SECRET` is any random string you choose;
-   it just has to match on both sides.
+2. Set the secrets. `TELEGRAM_WEBHOOK_SECRET` is any random string you choose.
+
+   There is nowhere in Telegram to type it. BotFather creates bots and issues
+   tokens; it has no webhook settings at all. A webhook can only be registered
+   through the Bot API's `setWebhook` method, and the secret is a parameter of
+   that same call. Step 3 makes that call, which is what puts the URL and the
+   secret on Telegram's side in one go. Until it runs, Telegram has nowhere to
+   deliver to, so the bot chat opens and nothing else happens.
 
    ```bash
    npx wrangler secret put TELEGRAM_BOT_TOKEN
@@ -137,7 +143,15 @@ is set, that check is skipped, so set the secrets before registering.
    ```
 
 `TELEGRAM_BOT_USERNAME` is what builds the `t.me/<bot>?start=<token>` deep link
-on the Connect button, so linking shows nothing useful until it is set.
+on the Connect button, so linking shows nothing useful until it is set. A leading
+`@` is stripped, since BotFather usually shows the username with one.
+
+Setting the secrets and registering the webhook are two separate things, and
+only the second one involves Telegram. The secrets tell the Worker what to do
+with updates; registration tells Telegram where to send them. Doing the first
+without the second is the most likely reason a bot appears connected but never
+replies. `/app` says so when it detects it, and `GET /api/diagnostics` reports
+whether each channel has ever called and what happened when it did.
 
 ### WhatsApp
 
