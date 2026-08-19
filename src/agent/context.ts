@@ -21,6 +21,7 @@
 import {
   BASE_SYSTEM_PROMPT,
   personalityLayer,
+  temporalContext,
   type Preferences,
 } from "./prompts";
 import { wrapUntrusted, type UntrustedContent } from "./untrusted";
@@ -124,8 +125,11 @@ export function assembleContext(args: {
   memories: string[];
   history: HistoryTurn[];
   input: TurnInput;
+  /** Injectable so the assembled context can be asserted in tests. */
+  now?: Date;
 }): Message[] {
   const { prefs, userName, memories, history, input } = args;
+  const now = args.now ?? new Date();
 
   // Layers 1 and 2, plus recalled memory, in the privileged position.
   const system = [
@@ -133,6 +137,9 @@ export function assembleContext(args: {
     "",
     "--- Your personality for this user ---",
     personalityLayer(prefs, userName),
+    "",
+    "--- Now ---",
+    temporalContext(now, prefs.timezone),
     memories.length
       ? [
           "",

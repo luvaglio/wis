@@ -64,6 +64,7 @@ export async function completeOnboarding(request: Request, env: Env): Promise<Re
     personality_other?: string;
     language?: string;
     proactivity?: number;
+    timezone?: string;
     context?: string;
     recording_key?: string;
     handle?: string;
@@ -89,10 +90,14 @@ export async function completeOnboarding(request: Request, env: Env): Promise<Re
   // Step 5. Proactivity, 1 to 5.
   const proactivity = clamp(Number(body?.proactivity ?? 3), 1, 5);
 
+  // The browser knows the user's timezone, so the assistant can be given a
+  // correct clock without ever asking a question about it.
+  const timezone = sanitiseTimezone(body?.timezone ?? "");
+
   await env.DB.prepare(
     `INSERT INTO preferences
-       (user_id, assistant_name, address_as, personality, personality_note, language, proactivity)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+       (user_id, assistant_name, address_as, personality, personality_note, language, proactivity, timezone)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (user_id) DO UPDATE SET
        assistant_name   = excluded.assistant_name,
        address_as       = excluded.address_as,
@@ -100,9 +105,10 @@ export async function completeOnboarding(request: Request, env: Env): Promise<Re
        personality_note = excluded.personality_note,
        language         = excluded.language,
        proactivity      = excluded.proactivity,
+       timezone         = COALESCE(excluded.timezone, preferences.timezone),
        updated_at       = unixepoch()`
   )
-    .bind(userId, assistantName, addressAs, personality, note, language, proactivity)
+    .bind(userId, assistantName, addressAs, personality, note, language, proactivity, timezone)
     .run();
 
   // The assistant's own address (SPEC 6.2). Default is generated with no user
@@ -179,6 +185,14 @@ export async function updatePreferences(request: Request, env: Env): Promise<Res
   if (body.proactivity !== undefined) {
     sets.push("proactivity = ?");
     values.push(clamp(Number(body.proactivity), 1, 5));
+  }
+
+  if (typeof body.timezone === "string") {
+    const zone = sanitiseTimezone(body.timezone);
+    if (zone) {
+      sets.push("timezone = ?");
+      values.push(zone);
+    }
   }
 
   if (sets.length === 0) return badRequest("Nothing to update.");
@@ -480,6 +494,24 @@ async function assignHandle(
     .bind(fallback, userId)
     .run();
   return fallback;
+}
+
+/**
+ * Accept only a real IANA zone.
+ *
+ * The value arrives from the browser, so it is user-controlled input that ends
+ * up in a formatter. Asking Intl whether it recognises the zone is both the
+ * validation and the check that it will actually work later.
+ */
+function sanitiseTimezone(raw: string): string | null {
+  const zone = raw.trim();
+  if (!zone || zone.length > 64) return null;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone }).format(new Date());
+    return zone;
+  } catch {
+    return null;
+  }
 }
 
 function sanitiseHandle(raw: string): string | null {

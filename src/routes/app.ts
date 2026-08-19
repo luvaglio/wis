@@ -35,6 +35,7 @@ type Me = {
   personality: string | null;
   language: string | null;
   proactivity: number | null;
+  timezone: string | null;
   handle: string | null;
 };
 
@@ -46,7 +47,8 @@ export async function renderApp(request: Request, env: Env): Promise<Response> {
 
   const me = await env.DB.prepare(
     `SELECT u.id, u.email, u.name, u.country, u.mobile_number, u.mobile_verified, u.onboarded,
-            p.assistant_name, p.address_as, p.personality, p.language, p.proactivity, h.handle
+            p.assistant_name, p.address_as, p.personality, p.language, p.proactivity,
+            p.timezone, h.handle
        FROM users u
        LEFT JOIN preferences p ON p.user_id = u.id
        LEFT JOIN assistant_handles h ON h.user_id = u.id
@@ -260,6 +262,7 @@ ${connections.length > 1 ? `<p class="disclaimer">Both are connected. Only the a
 
   <button class="start-btn" type="submit">Save changes</button>
   <p class="disclaimer" id="settings-status"></p>
+  <p class="disclaimer">Times are read in <span class="num">${esc(me.timezone ?? "UTC")}</span>, taken from this browser when you save.</p>
 </form>
 
 <hr class="rule">

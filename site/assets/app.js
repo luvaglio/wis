@@ -13,6 +13,18 @@ function post(path, body) {
 
 function byId(id) { return document.getElementById(id); }
 
+// The browser already knows the user's timezone, so the assistant can be given
+// a correct clock without asking a question about it. Without this it answers
+// "what day is it" from whatever the model assumed, and every relative time
+// the user mentions resolves against the wrong date.
+function currentTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 // ---- proactivity gauge (SPEC 3, step 5) ----
 // A concrete estimate, not an abstract token count.
 var ESTIMATES = {
@@ -112,6 +124,7 @@ if (form) {
           personality_other: data.get('personality_other'),
           language: data.get('language'),
           proactivity: Number(data.get('proactivity')),
+          timezone: currentTimezone(),
           context: data.get('context'),
           handle: data.get('handle')
         });
@@ -295,7 +308,8 @@ if (settingsForm) {
       address_as: data.get('address_as'),
       personality: data.get('personality'),
       language: data.get('language'),
-      proactivity: Number(data.get('proactivity'))
+      proactivity: Number(data.get('proactivity')),
+      timezone: currentTimezone()
     }).then(function (result) {
       button.disabled = false;
       button.textContent = 'Save changes';

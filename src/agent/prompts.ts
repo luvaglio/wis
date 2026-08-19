@@ -55,6 +55,8 @@ export type Preferences = {
   personality_note: string | null;
   language: string;
   proactivity: number;
+  /** IANA name, for example "Europe/London". Null when we have not been told. */
+  timezone?: string | null;
 };
 
 /**
@@ -123,6 +125,52 @@ export function proactivityEstimate(level: number): string {
     5: "roughly 90 messages a month",
   };
   return perMonth[Math.min(5, Math.max(1, level))]!;
+}
+
+/**
+ * What the assistant needs to know about now.
+ *
+ * A model has no clock, so without this it answers "what day is it" from
+ * whatever it assumed during training, and every relative reference the user
+ * makes ("Friday", "tomorrow", "next week") resolves against the wrong date.
+ * An assistant that books things cannot be vague about when now is.
+ *
+ * The timezone is the user's if we have been told it, and UTC otherwise, said
+ * plainly rather than guessed from their country.
+ */
+export function temporalContext(now: Date, timezone?: string | null): string {
+  const zone = timezone || "UTC";
+
+  let formatted: string;
+  try {
+    formatted = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(now);
+  } catch {
+    // An unknown or malformed zone must not take the turn down.
+    formatted = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(now);
+    return `Right now it is ${formatted} UTC. The user's timezone is not known, so say so if the difference matters.`;
+  }
+
+  return timezone
+    ? `Right now it is ${formatted} in the user's own timezone (${zone}). Resolve anything they say relative to this: "today", "tomorrow", "Friday", "next week".`
+    : `Right now it is ${formatted} UTC. The user's timezone is not known, so treat times as UTC and say so if the difference matters.`;
 }
 
 /**

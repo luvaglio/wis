@@ -12,6 +12,7 @@ import {
   personalityLayer,
   proactivityEstimate,
   narrationPrompt,
+  temporalContext,
   type Preferences,
 } from "../src/agent/prompts";
 
@@ -116,5 +117,40 @@ describe("narration prompt (SPEC 10.2)", () => {
     expect(prompt).toContain("already happened");
     expect(prompt).toContain("Do not add information that is not in the description");
     expect(prompt).toContain("Do not use em dashes");
+  });
+});
+
+describe("temporal context", () => {
+  const at = new Date("2026-08-19T18:30:00Z");
+
+  it("states the date and time in the user's own timezone", () => {
+    const line = temporalContext(at, "Europe/London");
+    expect(line).toContain("Wednesday");
+    expect(line).toContain("19 August 2026");
+    expect(line).toContain("19:30"); // BST, one hour ahead of UTC
+    expect(line).toContain("Europe/London");
+  });
+
+  it("converts correctly for a different zone", () => {
+    const line = temporalContext(at, "America/New_York");
+    expect(line).toContain("14:30");
+    expect(line).toContain("Wednesday");
+  });
+
+  it("falls back to UTC and says so when the zone is unknown", () => {
+    const line = temporalContext(at, null);
+    expect(line).toContain("UTC");
+    expect(line).toContain("18:30");
+    expect(line).toContain("not known");
+  });
+
+  it("does not throw on a malformed zone", () => {
+    const line = temporalContext(at, "Not/AZone");
+    expect(line).toContain("UTC");
+    expect(line).toContain("18:30");
+  });
+
+  it("tells the model to resolve relative dates against it", () => {
+    expect(temporalContext(at, "Europe/London")).toContain("tomorrow");
   });
 });

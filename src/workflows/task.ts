@@ -23,6 +23,8 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { getAgentByName } from "agents";
 
 import { METHOD_DESCRIPTIONS, type TaskMethod, type TaskTypeConfig } from "./config";
+import { readPages, isSafeUrl } from "./browse";
+import { route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
 
 export type TaskParams = {
   taskId: string;
@@ -84,7 +86,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
           retries: { limit: config.maxAttempts, delay: "10 seconds", backoff: "exponential" },
           timeout: `${config.attemptTimeout} seconds`,
         },
-        () => this.attempt(method, request, taskType)
+        () => this.attempt(method, userId, request, taskType)
       );
 
       lastDetail = outcome.detail;
@@ -140,6 +142,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
    */
   private async attempt(
     method: TaskMethod,
+    userId: string,
     request: string,
     taskType: string
   ): Promise<MethodOutcome> {
@@ -154,7 +157,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
           return { kind: "unavailable", detail: "the browser is not available right now" };
         }
         try {
-          return await this.attemptBrowser(request, taskType);
+          return await this.attemptBrowser(userId, request, taskType);
         } catch (err) {
           return { kind: "error", detail: describeError(err) };
         }
@@ -178,22 +181,90 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
   }
 
   /**
-   * Browser method. Anything the browser returns is external content and is
-   * handed back through the untrusted path (SPEC 9.4), never treated as
-   * instruction. Consequential actions found this way still require the
-   * user's confirmation.
+   * Browser method. Reads pages and reports what they say.
+   *
+   * Everything the browser returns is external content and goes back through
+   * the untrusted path (SPEC 9.4) before it reaches the reasoning model, which
+   * is why interpretation happens inside the Durable Object rather than here.
+   *
+   * This tier only reads. Even when it finds exactly what was asked for, a
+   * booking or a purchase is a consequential action and needs the user's
+   * confirmation in conversation (SPEC 9.4 item 3), so a task type that ends
+   * in one finishes as needs_input rather than success no matter how complete
+   * the finding is.
    */
-  private async attemptBrowser(request: string, taskType: string): Promise<MethodOutcome> {
-    // The browser tier reads. It does not commit the user to anything on its
-    // own: booking, buying and sending all require a confirmation turn, which
-    // is a conversation step, not a Workflow step.
-    void taskType;
-    void request;
+  private async attemptBrowser(
+    userId: string,
+    request: string,
+    taskType: string
+  ): Promise<MethodOutcome> {
+    const urls = await this.proposeUrls(request);
+    if (urls.length === 0) {
+      return { kind: "unavailable", detail: "there was nowhere obvious to look this up" };
+    }
+
+    const findings = await readPages(this.env, urls);
+    if (findings.length === 0) {
+      return {
+        kind: "unavailable",
+        detail: `nothing could be read from ${urls.map(hostOf).join(" or ")}`,
+      };
+    }
+
+    const agent = await getAgentByName(this.env.USER_AGENT, userId);
+    const summary = await agent.interpretFindings(request, findings);
+
+    if (!summary.trim()) {
+      return { kind: "error", detail: "the pages were read but could not be made sense of" };
+    }
+
+    // Research is finished by finding out. Anything that ends in committing
+    // the user to something is not.
+    if (taskType === "research") {
+      return { kind: "success", detail: summary };
+    }
+
     return {
       kind: "needs_input",
-      detail:
-        "browsing can look this up but cannot complete it without your go-ahead on the specifics",
+      detail: `${summary}\n\nSay the word and I will go ahead.`,
     };
+  }
+
+  /**
+   * Ask the router model where to look.
+   *
+   * The answer is treated as untrusted input, not as a decision: every URL is
+   * checked by `isSafeUrl` before the browser is pointed at it, so a model
+   * that suggests an internal or non-http address gets nowhere.
+   */
+  private async proposeUrls(request: string): Promise<string[]> {
+    try {
+      const answer = await route(
+        this.env,
+        [
+          {
+            role: "system",
+            content:
+              "Given a request, name up to two public web pages most likely to " +
+              "answer it. Reply with the URLs only, one per line, no numbering " +
+              "and no commentary. Prefer the official site of a named business " +
+              "or organisation. If you cannot name a likely page, reply NONE.",
+          },
+          { role: "user", content: request.slice(0, 1000) },
+        ],
+        { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "browse-targets" }
+      );
+
+      return answer
+        .split(/\s+/)
+        .map((t) => t.trim().replace(/[),.]+$/, ""))
+        .filter((t) => t.startsWith("http"))
+        .filter(isSafeUrl)
+        .slice(0, 2);
+    } catch (err) {
+      console.warn("could not propose browse targets", err);
+      return [];
+    }
   }
 
   /** Send a narration message. Wording is generated, the decision to send is not. */
@@ -230,6 +301,15 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
 
 function truncate(text: string, max = 160): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+/** Host only, for saying where we looked without pasting a full URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function describeError(err: unknown): string {
