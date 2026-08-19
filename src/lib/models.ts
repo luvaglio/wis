@@ -19,6 +19,15 @@ export type CompletionOptions = {
   temperature?: number;
   /** Label recorded on the AI Gateway request, for cost attribution. */
   purpose?: string;
+  /**
+   * Ask the model not to reason before answering.
+   *
+   * Only meaningful for models that reason by default. For a short structured
+   * answer their reasoning is the entire failure mode: it consumes the budget,
+   * leaves nothing to parse, and the caller sees an empty string. Set this for
+   * calls that want one line back, never for conversation.
+   */
+  noThinking?: boolean;
 };
 
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -213,7 +222,7 @@ async function runOnce(
   opts: CompletionOptions
 ): Promise<{ text: string; spentOnThinking: boolean }> {
   const input = {
-    messages,
+    messages: opts.noThinking ? withThinkingDisabled(model, messages) : messages,
     max_tokens: maxTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
   } as never;
@@ -249,6 +258,24 @@ async function runOnce(
  * returned reasoning text, never matched, and so no request was ever treated
  * as a task. Anything from an unclosed <think> to the end is discarded.
  */
+/**
+ * Qwen3 turns its own reasoning off when the prompt contains "/no_think".
+ *
+ * Model-specific by necessity: there is no portable way to ask for this, and
+ * the alternative is paying for reasoning we discard on every structured call.
+ * Applied only to models known to honour it, so pointing ROUTER_MODEL at
+ * something else changes nothing except that the flag stops being added.
+ */
+function withThinkingDisabled(model: string, messages: Message[]): Message[] {
+  if (!/qwen3/i.test(model)) return messages;
+
+  const first = messages[0];
+  if (first?.role === "system") {
+    return [{ ...first, content: `${first.content}\n/no_think` }, ...messages.slice(1)];
+  }
+  return [{ role: "system", content: "/no_think" }, ...messages];
+}
+
 function stripThinking(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "");
 }

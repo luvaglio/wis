@@ -26,14 +26,25 @@ import { reason, route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
 import { deliver } from "../channels/outbound";
 import { uuid } from "../lib/ids";
 import { getTaskTypeConfig } from "../workflows/config";
+import { classifyByWording } from "./classify";
 
 export type UserState = {
   /** Mirrors users.onboarded, so the DO can answer without a D1 round trip. */
   onboarded: boolean;
-  /** Set while a task Workflow is in flight, for the "already working on it" case. */
+  /** Retained for compatibility with instances created before tasks moved to D1. */
   activeTaskId: string | null;
   lastSeenAt: number;
 };
+
+/**
+ * How much work may run at once for one user. Enough that a second request
+ * during a slow task is not refused, low enough that a burst cannot fan out
+ * into unbounded browsing.
+ */
+const MAX_CONCURRENT_TASKS = 3;
+
+/** Past this, a task still marked running is assumed to have died. */
+const STALE_TASK_SECONDS = 15 * 60;
 
 type InboundArgs = {
   channel: "whatsapp" | "telegram" | "web";
@@ -114,6 +125,31 @@ export class UserAgent extends Agent<Env, UserState> {
   }
 
   /**
+   * What is already running for this user.
+   *
+   * Read from D1 rather than from the Durable Object's own state. A single
+   * `activeTaskId` field was both too strict and unreliable: it blocked every
+   * later request while one task ran, so anything asked during those ninety
+   * seconds was answered as ordinary chat and came back as "I cannot access
+   * real-time data". If a Workflow ever died without reporting, it also stuck
+   * permanently. Rows carry their own status, and a row that has sat in
+   * flight far longer than any task should is not counted.
+   */
+  private async runningTasks(): Promise<Array<{ id: string; request: string }>> {
+    const rows = await this.env.DB.prepare(
+      `SELECT id, request FROM tasks
+        WHERE user_id = ?
+          AND status IN ('pending', 'running')
+          AND created_at > unixepoch() - ?
+        ORDER BY created_at DESC
+        LIMIT 10`
+    )
+      .bind(this.userId, STALE_TASK_SECONDS)
+      .all<{ id: string; request: string }>();
+    return rows.results ?? [];
+  }
+
+  /**
    * The message handler. This is where all four context layers are stitched
    * into the model call, every turn (SPEC 9.3).
    */
@@ -140,14 +176,22 @@ export class UserAgent extends Agent<Env, UserState> {
     // it answered "Booked, Sir" for a booking no one had attempted. Starting
     // the task first means the reply is written under an explicit instruction
     // that the work is only just beginning.
+    const inFlight = await this.runningTasks();
     const task = args.text ? await this.classifyTask(args.text) : null;
     let taskId: string | null = null;
+    let atCapacity = false;
 
     if (task) {
-      try {
-        taskId = await this.startTask(task.taskType, task.request);
-      } catch (err) {
-        console.error("could not start task", err);
+      if (inFlight.length >= MAX_CONCURRENT_TASKS) {
+        // Refusing to start another is reasonable. Saying nothing about it is
+        // not, so the model is told and can explain rather than invent.
+        atCapacity = true;
+      } else {
+        try {
+          taskId = await this.startTask(task.taskType, task.request);
+        } catch (err) {
+          console.error("could not start task", err);
+        }
       }
     }
 
@@ -169,6 +213,31 @@ export class UserAgent extends Agent<Env, UserState> {
           "voice. Do not say it is done. Do not invent a confirmation, a time, " +
           "a reference, or any other detail. You will report back yourself as " +
           "the work progresses and when it finishes.",
+      });
+    }
+
+    if (atCapacity) {
+      messages.push({
+        role: "system",
+        content:
+          `You already have ${inFlight.length} pieces of work running and cannot ` +
+          "take on another right now. Say so plainly, name what you are already " +
+          "doing, and offer to pick this up once one of them finishes. Do not " +
+          "claim to have started it and do not answer as though you had looked " +
+          "it up yourself.",
+      });
+    } else if (inFlight.length > 0 && !taskId) {
+      // Work is running that this turn did not start. Without this the model
+      // has no idea, and will either deny being able to do the thing or invent
+      // a result for it.
+      messages.push({
+        role: "system",
+        content:
+          "You are already working on the following in the background, and " +
+          "none of it has finished:\n" +
+          inFlight.map((t) => `- ${t.request.slice(0, 160)}`).join("\n") +
+          "\nIf the user is asking about any of it, say it is still in hand and " +
+          "that you will report back. Never state a result you have not been given.",
       });
     }
 
@@ -223,8 +292,24 @@ export class UserAgent extends Agent<Env, UserState> {
     userText: string
   ): Promise<{ taskType: string; request: string } | null> {
     if (!userText.trim()) return null;
-    if (this.state.activeTaskId) return null;
 
+    const request = userText.slice(0, 2000);
+
+    // Decide in code where the wording is clear. This used to depend entirely
+    // on the router model, which reasons before answering: a longer request
+    // reasons for longer, exhausts the budget, and returns nothing to parse.
+    // The turn then fell through to an ordinary reply, where a model with no
+    // live data correctly says it cannot look up flights. The same request
+    // worked or did not depending on its length.
+    const byWording = classifyByWording(userText);
+
+    if (byWording.source === "direct-answer") return null;
+    if (byWording.type) {
+      return { taskType: byWording.type, request };
+    }
+
+    // Genuinely ambiguous. Ask the model, with its own reasoning turned off so
+    // the budget goes on the answer.
     try {
       const answer = await route(
         this.env,
@@ -239,17 +324,25 @@ export class UserAgent extends Agent<Env, UserState> {
               "or\n" +
               "TASK <type>\n" +
               "where <type> is one of: reservation, research, outreach, generic.\n" +
-              "Answer NONE for anything you can fully answer by replying, including " +
-              "questions, chat, and changes to the user's own settings.",
+              "Answer TASK research for anything needing current information we " +
+              "cannot know without looking it up, such as prices, availability or " +
+              "what is on offer right now. Answer NONE for chat, for general " +
+              "knowledge you can state from memory, and for changes to the user's " +
+              "own settings.",
           },
           { role: "user", content: userText.slice(0, 1500) },
         ],
-        { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "task-classification" }
+        {
+          maxTokens: ROUTER_STRUCTURED_TOKENS,
+          temperature: 0,
+          purpose: "task-classification",
+          noThinking: true,
+        }
       );
 
       const match = answer.trim().match(/TASK\s+(reservation|research|outreach|generic)/i);
       if (!match) return null;
-      return { taskType: match[1]!.toLowerCase(), request: userText.slice(0, 2000) };
+      return { taskType: match[1]!.toLowerCase(), request };
     } catch (err) {
       console.warn("task classification failed", err);
       return null;

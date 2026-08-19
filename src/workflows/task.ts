@@ -252,7 +252,12 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
           },
           { role: "user", content: request.slice(0, 1000) },
         ],
-        { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "browse-targets" }
+        {
+          maxTokens: ROUTER_STRUCTURED_TOKENS,
+          temperature: 0,
+          purpose: "browse-targets",
+          noThinking: true,
+        }
       );
 
       return answer

@@ -132,7 +132,12 @@ export async function screenForInjection(
           content: `Source: ${content.source}\n\n${content.body.slice(0, 4000)}`,
         },
       ],
-      { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "injection-screening" }
+      {
+        maxTokens: ROUTER_STRUCTURED_TOKENS,
+        temperature: 0,
+        purpose: "injection-screening",
+        noThinking: true,
+      }
     );
 
     const [head = "", ...rest] = answer.trim().split("\n");
