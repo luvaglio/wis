@@ -21,6 +21,17 @@
 
 set -euo pipefail
 
+
+# Pasting into a terminal with bracketed paste enabled wraps the text in
+# \e[200~ ... \e[201~. `read` captures those markers as part of the value, so
+# the token arrives with leading junk. curl then sees the "[" as a glob range
+# and fails with "bad range in URL", which points nowhere near the real cause.
+sanitise () {
+  printf '%s' "$1" \
+    | tr -d '\000-\037' \
+    | sed -e 's/\[20[01]~//g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 # Prompt rather than requiring the values up front. A bare `read -rs` at the
 # shell shows no prompt and echoes nothing, which is indistinguishable from a
 # hung command, and `read -p` does not mean the same thing in zsh as in bash.
@@ -33,8 +44,21 @@ if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo
 fi
 
+TELEGRAM_BOT_TOKEN=$(sanitise "${TELEGRAM_BOT_TOKEN}")
+
 if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then
   echo "No bot token given. Get one from @BotFather, then run this again." >&2
+  exit 1
+fi
+
+# A token is digits, a colon, then letters, digits, underscores and hyphens.
+# Checking the shape here turns a confusing curl error into a plain statement
+# of what is wrong.
+if ! printf '%s' "${TELEGRAM_BOT_TOKEN}" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+  echo "That does not look like a bot token." >&2
+  echo "Expected digits, a colon, then letters and digits, for example" >&2
+  echo "  8123456789:AAH0mE-xAmPl3T0k3nFr0mB0tFath3r" >&2
+  echo "Length received: ${#TELEGRAM_BOT_TOKEN}. Copy it again from @BotFather." >&2
   exit 1
 fi
 
@@ -45,7 +69,7 @@ fi
 # means Telegram delivers and the Worker refuses every update, with silence as
 # the only symptom. Leave TELEGRAM_WEBHOOK_SECRET unset here if you have not
 # set it with `wrangler secret put`.
-TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-}"
+TELEGRAM_WEBHOOK_SECRET=$(sanitise "${TELEGRAM_WEBHOOK_SECRET:-}")
 
 if [ -z "${TELEGRAM_WEBHOOK_SECRET}" ]; then
   echo
@@ -53,13 +77,14 @@ if [ -z "${TELEGRAM_WEBHOOK_SECRET}" ]; then
   echo "Check with: npx wrangler secret list"
   read -rsp "Webhook secret (blank for none, input hidden): " TELEGRAM_WEBHOOK_SECRET || true
   echo
+  TELEGRAM_WEBHOOK_SECRET=$(sanitise "${TELEGRAM_WEBHOOK_SECRET}")
 fi
 
 ORIGIN="${PUBLIC_ORIGIN:-https://wis.ai}"
 URL="${ORIGIN}/webhooks/telegram"
 
 api () {
-  curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/$1" "${@:2}"
+  curl -sS --globoff "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/$1" "${@:2}"
 }
 
 # Report Telegram's own error rather than failing on a missing "result" key,
