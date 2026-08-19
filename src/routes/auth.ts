@@ -12,6 +12,7 @@
  */
 
 import { bearerToken, hashToken, otpCode, timingSafeEqual, uuid } from "../lib/ids";
+import { sendEmail } from "../lib/email";
 import { json, badRequest } from "../lib/http";
 
 const OTP_TTL_SECONDS = 10 * 60;
@@ -200,18 +201,19 @@ async function sendCodeEmail(env: Env, to: string, code: string): Promise<void> 
 
 If you did not ask to sign in, ignore this message.`;
 
-  try {
-    await env.EMAIL.send({
-      to,
-      from: { email: env.AUTH_FROM_ADDRESS, name: "Wis.ai" },
-      subject: `${code} is your Wis.ai code`,
-      text,
-      html: codeEmailHtml(code),
-    });
-  } catch (err) {
-    // Never surface the reason to the caller: it would leak whether an
-    // address exists and what our sending posture is.
-    console.error("OTP send failed", err);
+  // Never surface a failure to the caller: it would leak whether an address
+  // exists and what our sending posture is. The failure is logged instead.
+  const result = await sendEmail(env, {
+    to,
+    fromAddress: env.AUTH_FROM_ADDRESS,
+    fromName: "Wis.ai",
+    subject: `${code} is your Wis.ai code`,
+    text,
+    html: codeEmailHtml(code),
+  });
+
+  if (!result.ok) {
+    console.error(`OTP send failed via ${result.via}: ${result.detail ?? "unknown"}`);
   }
 }
 

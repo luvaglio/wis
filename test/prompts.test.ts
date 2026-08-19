@@ -42,6 +42,11 @@ describe("base system prompt", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("<untrusted_content>");
     expect(BASE_SYSTEM_PROMPT).toContain("requires your user's confirmation");
   });
+
+  it("forbids claiming an action completed when it has not", () => {
+    expect(BASE_SYSTEM_PROMPT).toContain("NEVER CLAIM SOMETHING HAPPENED THAT DID NOT");
+    expect(BASE_SYSTEM_PROMPT).toContain("Do not invent a confirmation number");
+  });
 });
 
 describe("personality layer", () => {

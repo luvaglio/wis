@@ -93,6 +93,7 @@ that needs one degrades visibly rather than failing at startup.
 
 | Secret | Unlocks |
 |---|---|
+| `EMAIL_API_TOKEN` | Sending mail to any recipient. Without it, only verified destination addresses are reachable. |
 | `ANTHROPIC_API_KEY` | The reasoning tier. Without it, that tier falls back to `ROUTER_MODEL`. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | Telegram |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_NUMBER`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | WhatsApp |
@@ -105,22 +106,34 @@ These need account-level access that the Workers OAuth token does not carry.
 1. **Create the AI Gateway** named `wis`. Until it exists, model calls still
    work but bypass the gateway, and each bypass logs an error. SPEC 8.3
    requires every call to route through it.
-2. **Enable Email Sending** on the account and onboard `wis.ai`. Until then the
-   sign-in code cannot be delivered, and `/api/auth/request` returns success
-   without an email arriving. This blocks real sign-ups.
-3. **Add MX and SPF records for `me.wis.ai`** so each assistant's own inbox
+2. **Create an API token with Email Sending permission** and set it as the
+   `EMAIL_API_TOKEN` secret. Email Sending is enabled on the account and
+   `wis.ai` is onboarded, but the two send paths do not have the same reach:
+   the REST API sends to any recipient, while the `send_email` Workers binding
+   refuses any destination that is not a verified address in the account.
+   Sign-in codes go to people typing their address for the first time, so the
+   REST path is the only workable one. Without the token, auth mail falls back
+   to the binding and only reaches verified addresses.
+3. **Fix the DMARC record.** `_dmarc.wis.ai` currently contains
+   `v=spf1 -all`, which is an SPF value in a DMARC record and is not a valid
+   policy. Email Sending expects `v=DMARC1; p=reject;`. The MX, SPF and DKIM
+   records for sending were created automatically and are correct.
+4. **Add MX and SPF records for `me.wis.ai`** so each assistant's own inbox
    works (SPEC 6.1 keeps it on a separate subdomain from auth mail so a spam
    complaint against one assistant cannot damage deliverability of account
    mail). Three MX records at priorities 49, 63 and 99 pointing at
    `route1.mx.cloudflare.net`, `route2.mx.cloudflare.net` and
    `route3.mx.cloudflare.net`, plus an SPF TXT record of
    `v=spf1 include:_spf.mx.cloudflare.net ~all`.
-4. **Point `www.wis.ai` at the Worker.** It currently resolves to parking IPs
+5. **Point `www.wis.ai` at the Worker.** It currently resolves to parking IPs
    outside Cloudflare. The apex is live.
-5. **Configure a credential vault** before enabling credential cards. Those
+6. **Configure a credential vault** before enabling credential cards. Those
    cards fail closed while it is unset, which is deliberate: better to tell the
    user it did not save than to put a raw credential somewhere it does not
    belong (SPEC 7.2).
+7. **Set `ANTHROPIC_API_KEY`** to run the reasoning tier on the model SPEC 8
+   specifies. Without it that tier degrades to `ROUTER_MODEL`, which is a much
+   smaller model doing work the spec reserves for the strongest available one.
 
 ## Known spec deviations
 

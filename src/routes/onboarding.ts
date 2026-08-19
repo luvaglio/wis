@@ -231,7 +231,7 @@ async function normalisePersonality(
   if (!description) return { personality: "butler", note: null };
 
   try {
-    const { route } = await import("../lib/models");
+    const { route, ROUTER_STRUCTURED_TOKENS } = await import("../lib/models");
     const answer = await route(
       env,
       [
@@ -244,7 +244,7 @@ async function normalisePersonality(
         },
         { role: "user", content: description.slice(0, 400) },
       ],
-      { maxTokens: 10, temperature: 0, purpose: "personality-normalisation" }
+      { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "personality-normalisation" }
     );
 
     const label = answer.trim().toLowerCase().replace(/[^a-z-]/g, "");

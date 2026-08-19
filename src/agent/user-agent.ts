@@ -22,7 +22,7 @@ import {
 } from "./context";
 import { screenForInjection, type UntrustedContent } from "./untrusted";
 import { narrationPrompt, type Preferences } from "./prompts";
-import { reason, route } from "../lib/models";
+import { reason, route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
 import { deliver } from "../channels/outbound";
 import { uuid } from "../lib/ids";
 import { getTaskTypeConfig } from "../workflows/config";
@@ -130,6 +130,26 @@ export class UserAgent extends Agent<Env, UserState> {
     const query = args.text ?? args.untrusted?.body ?? "";
     const memories = await recallMemory(this.env, this.userId, query);
 
+    // Classify and hand off BEFORE the reply is generated.
+    //
+    // The ordering is the point. A task that leaves the conversation runs as a
+    // Workflow (SPEC 10), and the Workflow owns every progress and outcome
+    // message. If the reply were generated first, the model would be free to
+    // narrate an outcome that has not happened, which is exactly what it did:
+    // it answered "Booked, Sir" for a booking no one had attempted. Starting
+    // the task first means the reply is written under an explicit instruction
+    // that the work is only just beginning.
+    const task = args.text ? await this.classifyTask(args.text) : null;
+    let taskId: string | null = null;
+
+    if (task) {
+      try {
+        taskId = await this.startTask(task.taskType, task.request);
+      } catch (err) {
+        console.error("could not start task", err);
+      }
+    }
+
     const messages = assembleContext({
       prefs,
       userName,
@@ -137,6 +157,19 @@ export class UserAgent extends Agent<Env, UserState> {
       history: this.history(),
       input: { userMessage: args.text, untrusted: args.untrusted },
     });
+
+    if (taskId) {
+      messages.push({
+        role: "system",
+        content:
+          "You have just accepted this request as a task that runs in the " +
+          "background. It has been started and it has NOT finished. " +
+          "Acknowledge that you are on it, in one short sentence, in your own " +
+          "voice. Do not say it is done. Do not invent a confirmation, a time, " +
+          "a reference, or any other detail. You will report back yourself as " +
+          "the work progresses and when it finishes.",
+      });
+    }
 
     if (untrustedFlagged) {
       messages.push({
@@ -151,22 +184,25 @@ export class UserAgent extends Agent<Env, UserState> {
 
     let reply: string;
     try {
-      reply = await reason(this.env, messages, { purpose: "conversation", maxTokens: 700 });
+      reply = await reason(this.env, messages, { purpose: "conversation", maxTokens: 1200 });
     } catch (err) {
       console.error("reasoning call failed", err);
-      reply = "Something went wrong at my end. Try me again in a moment.";
+      reply = "";
+    }
+
+    // Never return an empty turn. Silence reads as the assistant ignoring the
+    // user, and when a task has just been handed off it would also leave them
+    // with no idea the work had started.
+    if (!reply.trim()) {
+      console.error("model returned no usable reply");
+      reply = taskId
+        ? "I am on it. I will come back to you as soon as I have something."
+        : "Something went wrong at my end. Try me again in a moment.";
     }
 
     if (args.text) this.append("user", args.text, args.channel);
     this.append("assistant", reply, args.channel);
     this.setState({ ...this.state, lastSeenAt: Date.now() });
-
-    // A task that leaves the conversation runs as a Workflow, not inline
-    // (SPEC 10). The reply is not blocked on the task completing.
-    const task = await this.classifyTask(query, reply);
-    if (task) {
-      this.ctx.waitUntil(this.startTask(task.taskType, task.request));
-    }
 
     if (args.channel !== "web") {
       this.ctx.waitUntil(deliver(this.env, this.userId, reply));
@@ -183,8 +219,7 @@ export class UserAgent extends Agent<Env, UserState> {
    * deterministic Workflow steps (SPEC 10.2).
    */
   private async classifyTask(
-    userText: string,
-    reply: string
+    userText: string
   ): Promise<{ taskType: string; request: string } | null> {
     if (!userText.trim()) return null;
     if (this.state.activeTaskId) return null;
@@ -208,7 +243,7 @@ export class UserAgent extends Agent<Env, UserState> {
           },
           { role: "user", content: userText.slice(0, 1500) },
         ],
-        { maxTokens: 20, temperature: 0, purpose: "task-classification" }
+        { maxTokens: ROUTER_STRUCTURED_TOKENS, temperature: 0, purpose: "task-classification" }
       );
 
       const match = answer.trim().match(/TASK\s+(reservation|research|outreach|generic)/i);

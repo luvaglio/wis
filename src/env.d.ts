@@ -12,6 +12,15 @@
  */
 
 interface Env {
+  /**
+   * Cloudflare API token with Email Sending permission.
+   *
+   * Required to reach recipients who are not verified destination addresses,
+   * which is every new sign-up. Without it, auth mail falls back to the
+   * send_email binding and only reaches verified addresses.
+   */
+  EMAIL_API_TOKEN?: string;
+
   /** Reasoning tier via AI Gateway. Without it, that tier degrades to ROUTER_MODEL. */
   ANTHROPIC_API_KEY?: string;
 
