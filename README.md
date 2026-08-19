@@ -228,6 +228,36 @@ These need account-level access that the Workers OAuth token does not carry.
    specifies. Without it that tier degrades to `ROUTER_MODEL`, which is a much
    smaller model doing work the spec reserves for the strongest available one.
 
+## What is structural but not yet capable
+
+`docs/ARCHITECTURE.md` lists a browsing agent, voice calls and outbound mail as
+task methods. The Workflow that sequences them is built and working; the
+capability behind most of them is not.
+
+| Method | Today |
+|---|---|
+| `api` | Reports unavailable. No first-party task API exists. |
+| `browser` | **A stub.** Returns "needs your go-ahead" without opening a browser. The `BROWSER` binding is configured and unused. |
+| `voice` | Reports unavailable. |
+| `email` | Reports unavailable. Outbound mail works (see `lib/email.ts`) but is not wired to a task method. |
+
+What this means in practice: a reservation task tries `api`, misses, notifies
+the user it is switching to browsing, gets the stub's canned reply, and ends
+`partial`. That is the specified shape (SPEC 10.1) running correctly over
+methods that cannot yet do the work.
+
+What is genuinely built and verified is the structure SPEC 10 fixes: the
+ordered chain read from `task_type_config` in D1, a notification before every
+transition, durable retries with backoff, and a terminal outcome that always
+carries next options. Adding real capability means filling in `attemptBrowser`
+and its siblings in `src/workflows/task.ts`; none of the surrounding structure
+has to change, which is the point of keeping them as seams.
+
+Anything a browser returns is external content and must go back through
+`wrapUntrusted` (SPEC 9.4) before it reaches the reasoning model, and a booking
+or purchase found that way still needs the user's confirmation. Both are
+requirements of that section, not optional hardening.
+
 ## Known spec deviations
 
 - `docs/SPEC.md` section 8 names `@cf/qwen/qwen3-30b-a3b` as the router
