@@ -236,8 +236,8 @@ capability behind most of them is not.
 
 | Method | Today |
 |---|---|
-| `api` | Reports unavailable. No first-party task API exists. |
-| `browser` | **A stub.** Returns "needs your go-ahead" without opening a browser. The `BROWSER` binding is configured and unused. |
+| `api` | Reports unavailable. Nothing is wired up, which is the significant gap: SPEC 10.1 puts a direct API first in the chain, so every request currently falls through to browsing. |
+| `browser` | Loads and extracts real pages, and that part works. Finding pages does not: search engines serve a bot challenge to Browser Rendering's addresses, so generic web search is unavailable. Useful only when pointed at a known URL. |
 | `voice` | Reports unavailable. |
 | `email` | Reports unavailable. Outbound mail works (see `lib/email.ts`) but is not wired to a task method. |
 

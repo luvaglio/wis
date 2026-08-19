@@ -23,8 +23,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { getAgentByName } from "agents";
 
 import { METHOD_DESCRIPTIONS, type TaskMethod, type TaskTypeConfig } from "./config";
-import { readPages, isSafeUrl } from "./browse";
-import { route, ROUTER_STRUCTURED_TOKENS } from "../lib/models";
+import { readPages, searchTargets } from "./browse";
 
 export type TaskParams = {
   taskId: string;
@@ -198,9 +197,23 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
     request: string,
     taskType: string
   ): Promise<MethodOutcome> {
-    const urls = await this.proposeUrls(request);
+    // Search rather than guess. Asking the model to name URLs produced
+    // confident links to pages that did not exist, and to the wrong company
+    // entirely: it offered Ryanair for a London to Miami flight, an airline
+    // that flies no transatlantic routes. A model asked to name a site answers
+    // from shallow association. Searching lets the results decide what exists,
+    // and the model never picks the supplier.
+    const urls = await searchTargets(this.env, request);
+
     if (urls.length === 0) {
-      return { kind: "unavailable", detail: "there was nowhere obvious to look this up" };
+      // Search engines serve a bot challenge to datacentre traffic, so generic
+      // web search is not available from here and no amount of retrying will
+      // change that. Say what is actually true rather than implying the search
+      // ran and found nothing.
+      return {
+        kind: "unavailable",
+        detail: "I have no way to search the open web for this from here",
+      };
     }
 
     const findings = await readPages(this.env, urls);
@@ -218,58 +231,18 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, TaskParams> {
       return { kind: "error", detail: "the pages were read but could not be made sense of" };
     }
 
+    const sources = findings.map((f) => hostOf(f.url)).join(", ");
+
     // Research is finished by finding out. Anything that ends in committing
     // the user to something is not.
     if (taskType === "research") {
-      return { kind: "success", detail: summary };
+      return { kind: "success", detail: `${summary}\n\nRead from: ${sources}.` };
     }
 
     return {
       kind: "needs_input",
-      detail: `${summary}\n\nSay the word and I will go ahead.`,
+      detail: `${summary}\n\nRead from: ${sources}. Say the word and I will go ahead.`,
     };
-  }
-
-  /**
-   * Ask the router model where to look.
-   *
-   * The answer is treated as untrusted input, not as a decision: every URL is
-   * checked by `isSafeUrl` before the browser is pointed at it, so a model
-   * that suggests an internal or non-http address gets nowhere.
-   */
-  private async proposeUrls(request: string): Promise<string[]> {
-    try {
-      const answer = await route(
-        this.env,
-        [
-          {
-            role: "system",
-            content:
-              "Given a request, name up to two public web pages most likely to " +
-              "answer it. Reply with the URLs only, one per line, no numbering " +
-              "and no commentary. Prefer the official site of a named business " +
-              "or organisation. If you cannot name a likely page, reply NONE.",
-          },
-          { role: "user", content: request.slice(0, 1000) },
-        ],
-        {
-          maxTokens: ROUTER_STRUCTURED_TOKENS,
-          temperature: 0,
-          purpose: "browse-targets",
-          noThinking: true,
-        }
-      );
-
-      return answer
-        .split(/\s+/)
-        .map((t) => t.trim().replace(/[),.]+$/, ""))
-        .filter((t) => t.startsWith("http"))
-        .filter(isSafeUrl)
-        .slice(0, 2);
-    } catch (err) {
-      console.warn("could not propose browse targets", err);
-      return [];
-    }
   }
 
   /** Send a narration message. Wording is generated, the decision to send is not. */
