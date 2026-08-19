@@ -123,11 +123,10 @@ async function anthropicViaGateway(
  * Gateway options for a Workers AI call (SPEC 8.3).
  *
  * Every model call is meant to go through AI Gateway. The gateway itself is
- * account infrastructure rather than something this Worker can create, so
- * `runWithGateway` below degrades loudly rather than silently: if the gateway
- * is missing, the call still succeeds and the miss is logged as an error, so
- * the product works while the gateway is being provisioned and the gap is
- * visible in logs until it is.
+ * account infrastructure rather than something this Worker can create, so a
+ * missing one degrades loudly rather than silently: the call still succeeds,
+ * and the miss is logged, so the product works while the gateway is being
+ * provisioned and the gap stays visible until it is.
  */
 function gatewayOptions(env: Env, purpose?: string) {
   if (!env.AI_GATEWAY_ID) return undefined;
@@ -137,6 +136,29 @@ function gatewayOptions(env: Env, purpose?: string) {
       ...(purpose ? { metadata: { purpose } } : {}),
     },
   };
+}
+
+/**
+ * Throttle for the missing-gateway warning.
+ *
+ * Every model call hits it, so a single conversation turn produced several
+ * identical lines and genuine errors got lost between them. Module scope is
+ * safe for this: it holds no user data, and the worst case of an isolate
+ * resetting it is that the warning is logged slightly more often.
+ */
+let lastGatewayWarningAt = 0;
+const GATEWAY_WARNING_INTERVAL_MS = 60_000;
+
+function warnMissingGateway(env: Env): void {
+  const now = Date.now();
+  if (now - lastGatewayWarningAt < GATEWAY_WARNING_INTERVAL_MS) return;
+  lastGatewayWarningAt = now;
+  console.error(
+    `AI Gateway "${env.AI_GATEWAY_ID}" is not reachable. Calls are bypassing ` +
+      `the gateway, so logging, cost tracking and fallback are not being ` +
+      `applied. Create the gateway to restore SPEC 8.3 behaviour. ` +
+      `(further occurrences suppressed for 60s)`
+  );
 }
 
 /**
@@ -205,11 +227,7 @@ async function runOnce(
     )) as { response?: string } | string;
   } catch (err) {
     if (!looksLikeMissingGateway(err)) throw err;
-    console.error(
-      `AI Gateway "${env.AI_GATEWAY_ID}" is not reachable. Calls are bypassing ` +
-        `the gateway, so logging, cost tracking and fallback are not being ` +
-        `applied. Create the gateway to restore SPEC 8.3 behaviour.`
-    );
+    warnMissingGateway(env);
     result = (await env.AI.run(model as Parameters<Ai["run"]>[0], input)) as
       | { response?: string }
       | string;
@@ -247,6 +265,7 @@ export async function embed(env: Env, texts: string[]): Promise<number[][]> {
     )) as { data?: number[][] };
   } catch (err) {
     if (!looksLikeMissingGateway(err)) throw err;
+    warnMissingGateway(env);
     result = (await env.AI.run(
       env.EMBEDDING_MODEL as Parameters<Ai["run"]>[0],
       input
