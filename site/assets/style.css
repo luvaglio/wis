@@ -435,3 +435,26 @@ main .rule {
 .card-wrap h1 { font-size: 1.2rem; margin-bottom: 1.25rem; }
 .card-wrap p { margin-bottom: 2rem; }
 .card-wrap form { margin-bottom: 0; }
+
+/* A remembered note, with the means to forget it. Same hairline card as a
+   channel row, so the two read as the same kind of thing. */
+.memory {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.memory span { flex: 1; min-width: 0; }
+.memory .ghost-btn { flex: 0 0 auto; }
+
+/* Settings stacks several questions; give each one room without the
+   fieldset spacing the onboarding form uses. */
+#settings .q:not(:first-child),
+main > .q { margin-top: 2.5rem; }

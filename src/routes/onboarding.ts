@@ -200,6 +200,162 @@ export async function updatePreferences(request: Request, env: Env): Promise<Res
   return json({ ok: true });
 }
 
+/**
+ * POST /api/handle
+ * Change the assistant's own email address (SPEC 6.2).
+ *
+ * The old address stops resolving, which is stated in the reply so it is not a
+ * surprise. Collisions are rejected rather than silently suffixed.
+ */
+export async function changeHandle(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const body = (await request.json().catch(() => null)) as { handle?: string } | null;
+  const wanted = sanitiseHandle(body?.handle ?? "");
+  if (!wanted) return badRequest("Letters and numbers, 3 to 24 characters.");
+
+  const current = await env.DB.prepare(`SELECT handle FROM assistant_handles WHERE user_id = ?`)
+    .bind(userId)
+    .first<{ handle: string }>();
+
+  if (current?.handle === wanted) {
+    return json({ ok: true, handle: `${wanted}@${env.ASSISTANT_EMAIL_DOMAIN}`, unchanged: true });
+  }
+
+  const taken = await env.DB.prepare(`SELECT 1 FROM assistant_handles WHERE handle = ?`)
+    .bind(wanted)
+    .first();
+  if (taken) return badRequest("That one is taken.");
+
+  // handle is the primary key, so this is a delete and insert rather than an
+  // update in place.
+  const statements = [
+    env.DB.prepare(`INSERT INTO assistant_handles (handle, user_id) VALUES (?, ?)`).bind(
+      wanted,
+      userId
+    ),
+  ];
+  if (current) {
+    statements.unshift(
+      env.DB.prepare(`DELETE FROM assistant_handles WHERE user_id = ?`).bind(userId)
+    );
+  }
+  await env.DB.batch(statements);
+
+  return json({
+    ok: true,
+    handle: `${wanted}@${env.ASSISTANT_EMAIL_DOMAIN}`,
+    previous: current ? `${current.handle}@${env.ASSISTANT_EMAIL_DOMAIN}` : null,
+  });
+}
+
+/**
+ * GET /api/memory
+ * What the assistant remembers about this user, so it can be reviewed and
+ * removed. "Your data is yours" (site/values) is hard to act on if you cannot
+ * see what is held.
+ *
+ * Rows written before the text column existed carry only a vector id. Those
+ * are backfilled from Vectorize on first read rather than left blank, so the
+ * list heals itself instead of needing a migration script.
+ */
+export async function listMemory(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const rows = await env.DB.prepare(
+    `SELECT vector_id, kind, text, created_at FROM memory_chunks
+      WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`
+  )
+    .bind(userId)
+    .all<{ vector_id: string; kind: string; text: string | null; created_at: number }>();
+
+  const chunks = rows.results ?? [];
+  const missing = chunks.filter((c) => !c.text).map((c) => c.vector_id);
+
+  if (missing.length) {
+    try {
+      const vectors = await env.MEMORY.getByIds(missing);
+      const recovered = new Map(
+        vectors.map((v) => [v.id, String(v.metadata?.text ?? "")])
+      );
+      const updates = [...recovered.entries()]
+        .filter(([, text]) => text)
+        .map(([id, text]) =>
+          env.DB.prepare(`UPDATE memory_chunks SET text = ? WHERE vector_id = ?`).bind(text, id)
+        );
+      if (updates.length) await env.DB.batch(updates);
+      for (const chunk of chunks) {
+        if (!chunk.text) chunk.text = recovered.get(chunk.vector_id) ?? null;
+      }
+    } catch (err) {
+      console.warn("could not backfill memory text", err);
+    }
+  }
+
+  return json({
+    ok: true,
+    memories: chunks.map((c) => ({
+      id: c.vector_id,
+      kind: c.kind,
+      text: c.text ?? "",
+      created_at: c.created_at,
+    })),
+  });
+}
+
+/** POST /api/memory  Add something the assistant should know. */
+export async function addMemory(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const body = (await request.json().catch(() => null)) as { text?: string } | null;
+  const text = (body?.text ?? "").trim();
+  if (!text) return badRequest("Nothing to remember.");
+  if (text.length > 4000) return badRequest("That is too long. Break it into a few notes.");
+
+  const agent = await getAgentByName(env.USER_AGENT, userId);
+  for (const chunk of chunkText(text)) {
+    await agent.remember(chunk, "settings");
+  }
+
+  return json({ ok: true });
+}
+
+/** DELETE /api/memory  Forget one chunk, in both stores. */
+export async function deleteMemory(request: Request, env: Env): Promise<Response> {
+  const userId = await resolveSession(request, env);
+  if (!userId) return unauthorized();
+
+  const body = (await request.json().catch(() => null)) as { id?: string } | null;
+  const id = (body?.id ?? "").trim();
+  if (!id) return badRequest("Which one?");
+
+  // Scoped by user_id so an id belonging to someone else cannot be deleted.
+  const owned = await env.DB.prepare(
+    `SELECT 1 FROM memory_chunks WHERE vector_id = ? AND user_id = ?`
+  )
+    .bind(id, userId)
+    .first();
+  if (!owned) return badRequest("That note is not there.");
+
+  try {
+    await env.MEMORY.deleteByIds([id]);
+  } catch (err) {
+    // If the vector delete fails, leaving the D1 row would hide a chunk that
+    // can still be recalled. Report rather than half-delete.
+    console.error("vector delete failed", err);
+    return json({ ok: false, error: "Could not forget that just now. Try again." }, { status: 500 });
+  }
+
+  await env.DB.prepare(`DELETE FROM memory_chunks WHERE vector_id = ? AND user_id = ?`)
+    .bind(id, userId)
+    .run();
+
+  return json({ ok: true });
+}
+
 /** GET /api/proactivity?level=3  Live usage gauge under the slider (SPEC 3, step 5). */
 export function proactivityGauge(request: Request): Response {
   const level = clamp(Number(new URL(request.url).searchParams.get("level") ?? 3), 1, 5);

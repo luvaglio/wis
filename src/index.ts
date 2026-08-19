@@ -17,6 +17,10 @@ import {
   saveAccount,
   completeOnboarding,
   updatePreferences,
+  changeHandle,
+  listMemory,
+  addMemory,
+  deleteMemory,
   checkHandle,
   proactivityGauge,
   uploadRecording,
@@ -164,6 +168,10 @@ async function handleApi(
   if (path === "/api/account" && method === "POST") return saveAccount(request, env);
   if (path === "/api/onboarding" && method === "POST") return completeOnboarding(request, env);
   if (path === "/api/preferences" && method === "POST") return updatePreferences(request, env);
+  if (path === "/api/handle" && method === "POST") return changeHandle(request, env);
+  if (path === "/api/memory" && method === "GET") return listMemory(request, env);
+  if (path === "/api/memory" && method === "POST") return addMemory(request, env);
+  if (path === "/api/memory" && method === "DELETE") return deleteMemory(request, env);
   if (path === "/api/recording" && method === "POST") return uploadRecording(request, env);
   if (path === "/api/cards" && method === "GET") return listCards(env, userId);
 

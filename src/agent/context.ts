@@ -102,10 +102,10 @@ export async function rememberChunk(
   ]);
 
   await env.DB.prepare(
-    `INSERT INTO memory_chunks (vector_id, user_id, kind) VALUES (?, ?, ?)
+    `INSERT INTO memory_chunks (vector_id, user_id, kind, text) VALUES (?, ?, ?, ?)
      ON CONFLICT (vector_id) DO NOTHING`
   )
-    .bind(id, userId, kind)
+    .bind(id, userId, kind, text.slice(0, 4000))
     .run();
 }
 

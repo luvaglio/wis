@@ -14,6 +14,14 @@ import { esc, html } from "../lib/http";
 import { resolveSession } from "./auth";
 import { proactivityEstimate } from "../agent/prompts";
 
+const PERSONALITIES = [
+  { value: "butler", label: "British butler. Dry, precise, never fawning." },
+  { value: "warm", label: "Warm. Friendly and human." },
+  { value: "no-nonsense", label: "No-nonsense. Answers and moves on." },
+  { value: "formal", label: "Formal. Professional register throughout." },
+  { value: "custom", label: "Something else." },
+] as const;
+
 type Me = {
   id: string;
   email: string;
@@ -23,6 +31,7 @@ type Me = {
   mobile_verified: number;
   onboarded: number;
   assistant_name: string | null;
+  address_as: string | null;
   personality: string | null;
   language: string | null;
   proactivity: number | null;
@@ -37,7 +46,7 @@ export async function renderApp(request: Request, env: Env): Promise<Response> {
 
   const me = await env.DB.prepare(
     `SELECT u.id, u.email, u.name, u.country, u.mobile_number, u.mobile_verified, u.onboarded,
-            p.assistant_name, p.personality, p.language, p.proactivity, h.handle
+            p.assistant_name, p.address_as, p.personality, p.language, p.proactivity, h.handle
        FROM users u
        LEFT JOIN preferences p ON p.user_id = u.id
        LEFT JOIN assistant_handles h ON h.user_id = u.id
@@ -73,7 +82,7 @@ function page(title: string, body: string): string {
 <meta name="robots" content="noindex">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#fbfbf9">
-<link rel="stylesheet" href="/assets/style.css?v=4">
+<link rel="stylesheet" href="/assets/style.css?v=5">
 </head>
 <body>
   <div class="page">
@@ -85,7 +94,7 @@ function page(title: string, body: string): string {
 ${body}
     </main>
   </div>
-  <script src="/assets/app.js?v=4"></script>
+  <script src="/assets/app.js?v=5"></script>
 </body>
 </html>`;
 }
@@ -124,11 +133,12 @@ function onboardingPage(me: Me): string {
   <fieldset class="step">
     <label class="q">What sort of manner do you want?</label>
     <div class="choices">
-      <label class="choice"><input type="radio" name="personality" value="butler" checked> British butler. Dry, precise, never fawning.</label>
-      <label class="choice"><input type="radio" name="personality" value="warm"> Warm. Friendly and human.</label>
-      <label class="choice"><input type="radio" name="personality" value="no-nonsense"> No-nonsense. Answers and moves on.</label>
-      <label class="choice"><input type="radio" name="personality" value="formal"> Formal. Professional register throughout.</label>
-      <label class="choice"><input type="radio" name="personality" value="custom"> Something else.</label>
+      ${PERSONALITIES.map(
+        (p) =>
+          `<label class="choice"><input type="radio" name="personality" value="${p.value}"${
+            p.value === "butler" ? " checked" : ""
+          }> ${p.label}</label>`
+      ).join("\n      ")}
     </div>
     <input class="field" id="personality_other" name="personality_other" placeholder="Describe it in your own words" hidden>
   </fieldset>
@@ -211,10 +221,51 @@ ${connections.length > 1 ? `<p class="disclaimer">Both are connected. Only the a
 
 <hr class="rule">
 
-<label class="q" for="proactivity">How proactive should ${esc(me.assistant_name ?? "Wis")} be?</label>
-<input class="slider" type="range" id="proactivity" min="1" max="5" step="1" value="${esc(me.proactivity ?? 3)}">
-<div class="slider-ends"><span>Only when asked</span><span>Checks in and anticipates</span></div>
-<p class="gauge">About <span class="num" id="estimate">${esc(proactivityEstimate(me.proactivity ?? 3).replace("roughly ", ""))}</span></p>
+<label class="q" for="handle">${esc(me.assistant_name ?? "Wis")}'s email address.</label>
+<div class="field-row">
+  <input class="field" id="handle" value="${esc(me.handle)}" maxlength="24">
+  <span class="suffix">@${esc(env.ASSISTANT_EMAIL_DOMAIN)}</span>
+</div>
+<p class="disclaimer" id="handle-status">Changing this stops the old address working.</p>
+<button class="ghost-btn" id="save-handle">Save address</button>
+
+<hr class="rule">
+
+<form id="settings">
+  <label class="q" for="assistant_name">What ${esc(me.assistant_name ?? "Wis")} is called.</label>
+  <input class="field" id="assistant_name" name="assistant_name" value="${esc(me.assistant_name)}" maxlength="40">
+
+  <label class="q" for="address_as">How they address you.</label>
+  <input class="field" id="address_as" name="address_as" value="${esc(me.address_as)}" placeholder="Sir, Madam, or your name" maxlength="40">
+
+  <label class="q">Their manner.</label>
+  <div class="choices">
+    ${PERSONALITIES.map(
+      (p) =>
+        `<label class="choice"><input type="radio" name="personality" value="${p.value}"${
+          (me.personality ?? "butler") === p.value ? " checked" : ""
+        }> ${p.label}</label>`
+    ).join("\n    ")}
+  </div>
+
+  <label class="q" for="language">Language.</label>
+  <input class="field" id="language" name="language" value="${esc(me.language ?? "en")}" maxlength="12">
+
+  <label class="q" for="proactivity">How proactive should ${esc(me.assistant_name ?? "Wis")} be?</label>
+  <input class="slider" type="range" id="proactivity" name="proactivity" min="1" max="5" step="1" value="${esc(me.proactivity ?? 3)}">
+  <div class="slider-ends"><span>Only when asked</span><span>Checks in and anticipates</span></div>
+  <p class="gauge">About <span class="num" id="estimate">${esc(proactivityEstimate(me.proactivity ?? 3).replace("roughly ", ""))}</span></p>
+
+  <button class="start-btn" type="submit">Save changes</button>
+  <p class="disclaimer" id="settings-status"></p>
+</form>
+
+<hr class="rule">
+
+<label class="q">What ${esc(me.assistant_name ?? "Wis")} knows about you.</label>
+<div id="memory-list"><p class="disclaimer">Loading.</p></div>
+<textarea class="field" id="memory-new" rows="3" placeholder="Anything else they should know"></textarea>
+<button class="ghost-btn" id="add-memory">Add</button>
 
 <hr class="rule">
 

@@ -62,10 +62,13 @@ var handleStatus = byId('handle-status');
 var handleTimer;
 
 if (handleInput && handleStatus) {
+  var originalHandle = handleInput.value.trim();
+
   handleInput.addEventListener('input', function () {
     clearTimeout(handleTimer);
     var value = handleInput.value.trim();
     if (!value) { handleStatus.textContent = ''; return; }
+    if (value === originalHandle) { handleStatus.textContent = 'This is the current address.'; return; }
 
     handleTimer = setTimeout(function () {
       fetch('/api/handle/check?handle=' + encodeURIComponent(value))
@@ -242,12 +245,114 @@ document.querySelectorAll('.set-active').forEach(function (button) {
   });
 });
 
-// ---- settings: proactivity persists on release ----
-// /api/preferences updates only what it is given. Posting a single setting to
-// /api/onboarding would rewrite the whole personality layer and reset the rest.
-if (slider && !form) {
-  slider.addEventListener('change', function () {
-    post('/api/preferences', { proactivity: Number(slider.value) });
+// ---- settings ----
+// Everything chosen during onboarding stays editable here. /api/preferences is
+// a partial update, so it is safe to send only what changed.
+var settingsForm = byId('settings');
+
+if (settingsForm) {
+  settingsForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var status = byId('settings-status');
+    var button = settingsForm.querySelector('button[type="submit"]');
+    var data = new FormData(settingsForm);
+
+    status.textContent = '';
+    button.disabled = true;
+    button.textContent = 'Saving';
+
+    post('/api/preferences', {
+      assistant_name: data.get('assistant_name'),
+      address_as: data.get('address_as'),
+      personality: data.get('personality'),
+      language: data.get('language'),
+      proactivity: Number(data.get('proactivity'))
+    }).then(function (result) {
+      button.disabled = false;
+      button.textContent = 'Save changes';
+      if (!result.ok) { status.textContent = result.error || 'Could not save.'; return; }
+      // The name appears in several headings, so re-render rather than leave
+      // the page showing the old one.
+      window.location.reload();
+    });
+  });
+}
+
+// ---- change the assistant's email address (SPEC 6.2) ----
+var saveHandle = byId('save-handle');
+
+if (saveHandle && handleInput && handleStatus) {
+  saveHandle.addEventListener('click', function () {
+    var value = handleInput.value.trim();
+    if (!value) { handleStatus.textContent = 'Pick an address first.'; return; }
+
+    saveHandle.disabled = true;
+    saveHandle.textContent = 'Saving';
+
+    post('/api/handle', { handle: value }).then(function (result) {
+      saveHandle.disabled = false;
+      saveHandle.textContent = 'Save address';
+      handleStatus.textContent = result.ok
+        ? (result.unchanged ? 'That is already the address.' : 'Now ' + result.handle + '.')
+        : (result.error || 'Could not change it.');
+    });
+  });
+}
+
+// ---- what the assistant knows about you ----
+var memoryList = byId('memory-list');
+var memoryNew = byId('memory-new');
+var addMemoryBtn = byId('add-memory');
+
+function renderMemory() {
+  fetch('/api/memory')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) return;
+      if (!data.memories.length) {
+        memoryList.innerHTML = '<p class="disclaimer">Nothing yet.</p>';
+        return;
+      }
+      memoryList.innerHTML = data.memories.map(function (m) {
+        var div = document.createElement('div');
+        div.textContent = m.text;
+        return '<div class="memory"><span>' + div.innerHTML +
+          '</span><button class="ghost-btn forget" data-id="' + m.id + '">Forget</button></div>';
+      }).join('');
+
+      memoryList.querySelectorAll('.forget').forEach(function (b) {
+        b.addEventListener('click', function () {
+          b.disabled = true;
+          fetch('/api/memory', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: b.dataset.id })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (result) {
+              if (result.ok) renderMemory();
+              else b.disabled = false;
+            });
+        });
+      });
+    });
+}
+
+if (memoryList) renderMemory();
+
+if (addMemoryBtn && memoryNew) {
+  addMemoryBtn.addEventListener('click', function () {
+    var text = memoryNew.value.trim();
+    if (!text) { memoryNew.focus(); return; }
+
+    addMemoryBtn.disabled = true;
+    addMemoryBtn.textContent = 'Adding';
+
+    post('/api/memory', { text: text }).then(function (result) {
+      addMemoryBtn.disabled = false;
+      addMemoryBtn.textContent = 'Add';
+      if (result.ok) { memoryNew.value = ''; renderMemory(); }
+    });
   });
 }
 
