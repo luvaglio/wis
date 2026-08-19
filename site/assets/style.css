@@ -160,13 +160,7 @@ p { margin-bottom: 2rem; }
   margin-bottom: 3rem;
 }
 
-.phone-row {
-  display: flex;
-  gap: 0.5rem;
-  width: 100%;
-  margin-bottom: 1rem;
-}
-.field, select, input[type="tel"] {
+.field, select {
   font-family: inherit;
   font-size: 1rem;
   line-height: 1.4;
@@ -178,13 +172,11 @@ p { margin-bottom: 2rem; }
   outline: none;
   transition: border-color 200ms ease;
 }
-select { flex: 0 0 7.2rem; }
-input[type="tel"] { flex: 1; min-width: 0; }
-select:focus-visible, input:focus-visible, a:focus-visible, button:focus-visible {
+input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.field:hover, select:hover, input[type="tel"]:hover { border-color: #c9c9bf; }
+.field:hover, select:hover { border-color: #c9c9bf; }
 
 .start-btn {
   width: 100%;
@@ -233,6 +225,11 @@ footer a:hover { color: var(--ink); }
 @media (max-width: 480px) {
   body { font-size: 16px; }
   .page { padding-top: 3rem; }
+}
+
+#email-step,
+#code-step {
+  width: 100%;
 }
 
 /* --------------------------------------------------------------------------
