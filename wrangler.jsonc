@@ -1,0 +1,76 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wis",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-18",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // A route rather than a custom domain: the apex already has a proxied DNS
+  // record, and a route intercepts in front of it without needing that record
+  // to be torn down and recreated. workers.dev stays on as a smoke-test URL
+  // that is independent of the live domain.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "wis.ai/*", "zone_name": "wis.ai" }
+  ],
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  // Static marketing site + app shell. The Worker runs first so /api,
+  // /c/{shortcode} and the webhook routes are handled before asset lookup.
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "/c/*", "/webhooks/*", "/app", "/app/*"]
+  },
+
+  "durable_objects": {
+    "bindings": [{ "name": "USER_AGENT", "class_name": "UserAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserAgent"] }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wis",
+      "database_id": "08d4b16e-2c35-4c28-b449-5bcb1ddce967",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  "kv_namespaces": [
+    { "binding": "KV", "id": "47360a0208c34e94b49a741601399e5b" }
+  ],
+
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "wis-files" }],
+
+  // Vectorize, Workers AI and Browser Run have no local simulation, so
+  // local dev talks to the real resources for these three.
+  "vectorize": [{ "binding": "MEMORY", "index_name": "wis-memory", "remote": true }],
+
+  "ai": { "binding": "AI", "remote": true },
+
+  "browser": { "binding": "BROWSER", "remote": true },
+
+  "send_email": [{ "name": "EMAIL" }],
+
+  "workflows": [
+    { "name": "wis-task", "binding": "TASK_WORKFLOW", "class_name": "TaskWorkflow" }
+  ],
+
+  // Model tiers are config, never hardcoded in application logic.
+  // See docs/SPEC.md section 8. Change either value and redeploy to
+  // move a tier to a newer model; no code change required.
+  "vars": {
+    "REASONING_MODEL": "claude-sonnet-5",
+    "ROUTER_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
+    "EMBEDDING_MODEL": "@cf/baai/bge-base-en-v1.5",
+    "AI_GATEWAY_ID": "wis",
+    "CF_ACCOUNT_ID": "46e209331641f95f1071b654348510ee",
+    "PUBLIC_ORIGIN": "https://wis.ai",
+    "ASSISTANT_EMAIL_DOMAIN": "me.wis.ai",
+    "AUTH_FROM_ADDRESS": "verify@wis.ai"
+  }
+}

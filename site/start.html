@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Start | Wis.ai</title>
+<meta name="description" content="Hire Wis.ai as your assistant. Enter your email and we'll send you a sign-in code.">
+<link rel="canonical" href="https://wis.ai/start">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fbfbf9">
+<meta property="og:site_name" content="Wis.ai">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wis.ai/start">
+<meta property="og:title" content="Start | Wis.ai">
+<meta property="og:description" content="Hire Wis.ai as your assistant. Enter your email and we'll send you a sign-in code.">
+<meta property="og:image" content="https://wis.ai/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Wis.ai W wordmark with a text cursor">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Start | Wis.ai">
+<meta name="twitter:description" content="Hire Wis.ai as your assistant. Enter your email and we'll send you a sign-in code.">
+<meta name="twitter:image" content="https://wis.ai/assets/og.png">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <div class="start-wrap reveal">
+    <a class="mark start-w" href="/" style="text-decoration:none">W<span class="caret"></span></a>
+
+    <div class="counter" id="counter">0</div>
+    <div class="counter-label">are also hiring Wis.ai</div>
+
+    <div id="email-step">
+      <input class="field" type="email" id="email" inputmode="email" autocomplete="email" placeholder="Email address" aria-label="Email address">
+      <button class="start-btn" id="startBtn">Start</button>
+      <p class="disclaimer">We'll email you a six digit code to sign in. No password to remember, and no text messages.</p>
+    </div>
+
+    <div id="code-step" hidden>
+      <p class="sent-to">Code sent to <span id="sent-to"></span>.</p>
+      <input class="field code-field" type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="Six digit code">
+      <button class="start-btn" id="verifyBtn">Continue</button>
+      <p class="disclaimer"><a href="#" id="resend">Send it again</a></p>
+    </div>
+
+    <p class="disclaimer" id="start-error" role="status"></p>
+
+    <p class="disclaimer" style="margin-top:0.5rem"><a href="/terms">Terms</a> &nbsp;&middot;&nbsp; <a href="/privacy-policy">Privacy</a></p>
+  </div>
+
+  <script src="/assets/start.js"></script>
+</body>
+</html>

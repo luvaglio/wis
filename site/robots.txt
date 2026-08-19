@@ -1,0 +1,7 @@
+# Wis.ai robots.txt
+# AI agents: see https://wis.ai/llms.txt for a structured summary of this site.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://wis.ai/sitemap.xml

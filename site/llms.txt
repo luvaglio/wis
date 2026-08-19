@@ -1,0 +1,33 @@
+# Wis.ai
+
+> Wis.ai is a personal assistant built the way you would hire one in the real world. It works over the messaging apps people already use (WhatsApp and Telegram, with more channels coming), has its own computer with internet access, a voice, a phone number and an email address, and uses its devices the same way humans do. It focuses on three things that make an assistant valuable: intelligence, memory and a sense of humour.
+
+## Key facts
+
+- Product: a personal AI assistant, hired and fired like a real assistant. No app to install; users message it on channels they already use.
+- When starting, users choose the characteristics they would value in a real-world assistant. Wis.ai learns the user and what is important to them.
+- Capabilities: browses the web with its own computer, sends and receives email, makes and receives real voice calls, remembers context across conversations.
+- Each assistant has its own email address on the me.wis.ai subdomain. Mail sent there reaches that user's assistant, and is treated as reference material rather than as instructions.
+- Availability: currently in a private group while infrastructure is built and scaled. Signup is by email at https://wis.ai/start, using a single-use code sent to the address. There is no password and no SMS.
+- Data: the user's data belongs to the user. It can be downloaded or deleted at any time by asking the assistant, and it is never used to train models for anyone else.
+- Data storage is based on account location. US account data is stored and processed in the United States under applicable US law. EU and UK account data is stored in the region and handled under GDPR or UK GDPR where those laws apply.
+- Users can cancel (fire their assistant) at any time.
+
+## Values
+
+- We don't believe in AI fear-mongering. AI is not out to "get us" or "go rogue".
+- AI is a collection of vectors (numbers) and prediction algorithms. How it's trained, its weights and the guardrails around it largely determine how it acts.
+- Wis.ai will always be direct, simple and helpful, and will always take positive action toward an outcome in line with the user's wishes.
+
+## Pages
+
+- [Home](https://wis.ai/): what Wis.ai is and how it works
+- [Values](https://wis.ai/values): our values and beliefs
+- [Start](https://wis.ai/start): hire Wis.ai as your assistant
+- [Terms of Service](https://wis.ai/terms): plain-language terms, Delaware (US) governing law
+- [Privacy Policy](https://wis.ai/privacy-policy): what we collect, why, and user rights (US state laws, CCPA; GDPR/UK GDPR where applicable)
+
+## Contact
+
+- General: hello@wis.ai
+- Privacy: privacy@wis.ai
